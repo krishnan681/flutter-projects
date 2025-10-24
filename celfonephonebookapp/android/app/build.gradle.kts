@@ -26,13 +26,23 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
-            storePassword = keystoreProperties["storePassword"] as String
+    create("release") {
+        val keyAliasValue = keystoreProperties["keyAlias"]?.toString()
+        val keyPasswordValue = keystoreProperties["keyPassword"]?.toString()
+        val storeFileValue = keystoreProperties["storeFile"]?.toString()
+        val storePasswordValue = keystoreProperties["storePassword"]?.toString()
+
+        if (keyAliasValue != null && keyPasswordValue != null && storeFileValue != null && storePasswordValue != null) {
+            keyAlias = keyAliasValue
+            keyPassword = keyPasswordValue
+            storeFile = file(storeFileValue)
+            storePassword = storePasswordValue
+        } else {
+            println("⚠️ Warning: Missing keystore properties. Falling back to debug signing.")
         }
     }
+}
+
 
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_11.toString()
