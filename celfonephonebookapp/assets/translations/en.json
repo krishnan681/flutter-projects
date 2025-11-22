@@ -1,0 +1,37 @@
+{
+  "title_profile": "Profile",
+  "title_edit_profile": "Edit Profile",
+  "section_product_images": "Product Images",
+  "tooltip_add_image": "Add Product Image",
+  "label_your_profile": "Your Profile",
+  "label_default_email": "email@example.com",
+  "label_empty": "<empty>",
+
+  "field_business_name": "Business Name",
+  "field_person_name": "Person Name",
+  "field_address": "Address",
+  "field_keywords": "Keywords",
+  "field_description": "Description",
+  "field_city": "City",
+  "field_pincode": "Pincode",
+  "field_whats_app": "WhatsApp",
+  "field_email": "Email",
+
+  "btn_save_all": "Save All",
+  "btn_cancel": "Cancel",
+
+  "menu_refresh": "Refresh Profile",
+  "menu_edit": "Edit Profile",
+
+  "msg_user_id_not_found": "User ID not found",
+  "msg_load_error": "Error loading profile: %s",
+  "msg_profile_updated": "Profile updated successfully!",
+  "msg_save_failed": "Save failed: %s",
+  "msg_image_uploaded": "Image uploaded",
+  "msg_upload_failed": "Upload failed: %s",
+  "msg_image_deleted": "Image deleted",
+  "msg_delete_failed": "Delete failed",
+
+  "settings": "Settings",
+  "language": "Language"
+}

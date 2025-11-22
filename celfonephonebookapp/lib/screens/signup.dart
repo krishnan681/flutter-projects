@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // <-- added for input formatters
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../supabase/supabase.dart';
 import './homepage_shell.dart';
 
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
-
   @override
   State<SignupPage> createState() => _SignupPageState();
 }
@@ -25,7 +25,7 @@ class _SignupPageState extends State<SignupPage> {
 
   // Person
   final personNameController = TextEditingController();
-  String? personPrefix = "--"; // ✅ default
+  String? personPrefix = "--"; // default
   final keywordsController = TextEditingController(); // profession/products
 
   // Business
@@ -33,6 +33,41 @@ class _SignupPageState extends State<SignupPage> {
   final descriptionController = TextEditingController();
   final landlineController = TextEditingController();
   final landlineCodeController = TextEditingController();
+
+  // --- Focus & Help-text (unchanged) ---
+  final Map<TextEditingController, FocusNode> _focusNodes = {};
+  final Map<TextEditingController, bool> _showHelp = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _initFocus(
+      mobileController,
+      "Enter a 10-digit Indian mobile number (starts with 6-9).",
+    );
+    _initFocus(
+      emailController,
+      "Enter a valid email address (must contain @).",
+    );
+    _initFocus(cityController, "Enter the city name.");
+    _initFocus(pincodeController, "Enter a 6-digit pincode (numbers only).");
+    _initFocus(addressController, "Enter the full address.");
+    _initFocus(personNameController, "Enter the person's full name.");
+    _initFocus(businessNameController, "Enter the firm / business name.");
+    _initFocus(
+      keywordsController,
+      "Enter profession (person) or products (business).",
+    );
+    _initFocus(landlineController, "Enter the landline number (numbers only).");
+    _initFocus(landlineCodeController, "Enter the STD code (numbers only).");
+  }
+
+  void _initFocus(TextEditingController ctrl, String help) {
+    final node = FocusNode();
+    _focusNodes[ctrl] = node;
+    _showHelp[ctrl] = false;
+    node.addListener(() => setState(() => _showHelp[ctrl] = node.hasFocus));
+  }
 
   Timer? _debounce;
   bool _isCheckingMobile = false;
@@ -43,6 +78,7 @@ class _SignupPageState extends State<SignupPage> {
   @override
   void dispose() {
     _debounce?.cancel();
+    for (final n in _focusNodes.values) n.dispose();
     mobileController.dispose();
     emailController.dispose();
     cityController.dispose();
@@ -57,18 +93,16 @@ class _SignupPageState extends State<SignupPage> {
     super.dispose();
   }
 
-  // ===== Mobile Check (same as before) =====
+  // ===== Mobile Check (unchanged) =====
   void _onMobileChanged(String value) {
     _debounce?.cancel();
     setState(() {
       _mobileMsg = null;
       _mobileExists = false;
     });
-
     final trimmed = value.trim();
     final isPatternOk = RegExp(r'^[6-9]\d{9}$').hasMatch(trimmed);
     if (!isPatternOk) return;
-
     _debounce = Timer(const Duration(milliseconds: 500), () {
       _checkMobileExists(trimmed);
     });
@@ -80,16 +114,13 @@ class _SignupPageState extends State<SignupPage> {
       _isCheckingMobile = true;
       _lastCheckToken = checkToken;
     });
-
     try {
       final res = await SupabaseService.client
           .from('profiles')
           .select('business_name, person_name')
           .eq('mobile_number', mobile)
           .maybeSingle();
-
       if (!mounted || _lastCheckToken != checkToken) return;
-
       if (res != null) {
         final business = (res['business_name'] as String?)?.trim();
         final person = (res['person_name'] as String?)?.trim();
@@ -102,7 +133,7 @@ class _SignupPageState extends State<SignupPage> {
       } else {
         setState(() {
           _mobileExists = false;
-          _mobileMsg = "Mobile available ✓";
+          _mobileMsg = "Mobile available [Checkmark]";
         });
       }
     } catch (e) {
@@ -117,32 +148,100 @@ class _SignupPageState extends State<SignupPage> {
     }
   }
 
-  // ===== Validators =====
+  // ===== NEW VALIDATORS (added) =====
   String? validateMobile(String? value) {
     if (value == null || value.isEmpty) return "Enter mobile number";
     if (!RegExp(r'^[6-9]\d{9}$').hasMatch(value)) {
-      return "Enter valid Indian mobile number";
+      return "Enter valid 10-digit Indian mobile number";
     }
     return null;
   }
-  String? validateCity(String? value) {
-    if (value == null || value.trim().isEmpty) return "Enter city";
+
+  String? validateEmail(String? value) {
+    if (value == null || value.isEmpty) return "Enter email";
+    if (!value.contains('@')) return "Email must contain @";
     return null;
   }
 
-
   String? validatePincode(String? value) {
     if (value == null || value.isEmpty) return "Enter pincode";
-    if (!RegExp(r'^\d{6}$').hasMatch(value)) return "Enter valid 6-digit pincode";
+    if (!RegExp(r'^\d{6}$').hasMatch(value))
+      return "Enter valid 6-digit pincode";
     return null;
+  }
+
+  String? validateLandline(String? value) {
+    if (value == null || value.isEmpty) return null; // optional
+    if (!RegExp(r'^\d+$').hasMatch(value))
+      return "Landline must contain numbers only";
+    return null;
+  }
+
+  String? validateStdCode(String? value) {
+    if (value == null || value.isEmpty) return null; // optional
+    if (!RegExp(r'^\d+$').hasMatch(value))
+      return "STD code must contain numbers only";
+    return null;
+  }
+
+  // ----- Reusable field with help & formatters -----
+  Widget _field({
+    required TextEditingController controller,
+    required String label,
+    String? hint,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+    Widget? suffixIcon,
+    List<TextInputFormatter>? inputFormatters,
+  }) {
+    final help = {
+      mobileController:
+          "Enter a 10-digit Indian mobile number (starts with 6-9).",
+      emailController: "Enter a valid email address (must contain @).",
+      cityController: "Enter the city name.",
+      pincodeController: "Enter a 6-digit pincode (numbers only).",
+      addressController: "Enter the full address.",
+      personNameController: "Enter the person's full name.",
+      businessNameController: "Enter the firm / business name.",
+      keywordsController: "Enter profession (person) or products (business).",
+      landlineController: "Enter the landline number (numbers only).",
+      landlineCodeController: "Enter the STD code (numbers only).",
+    }[controller]!;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: controller,
+          focusNode: _focusNodes[controller],
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hint,
+            suffixIcon: suffixIcon,
+          ),
+          keyboardType: keyboardType,
+          inputFormatters: inputFormatters,
+          validator: validator,
+          onChanged: controller == mobileController ? _onMobileChanged : null,
+        ),
+        if (_showHelp[controller]!)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: 4),
+            child: Text(
+              help,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+          ),
+      ],
+    );
   }
 
   // ===== Person Form =====
   Widget _buildPersonForm() => Column(
     children: [
-      TextFormField(
+      _field(
         controller: personNameController,
-        decoration: const InputDecoration(labelText: "Person Name"),
+        label: "Person Name",
         validator: (v) => v == null || v.isEmpty ? "Required" : null,
       ),
       DropdownButtonFormField<String>(
@@ -155,40 +254,40 @@ class _SignupPageState extends State<SignupPage> {
         onChanged: (val) => setState(() => personPrefix = val),
         decoration: const InputDecoration(labelText: "Prefix"),
       ),
-      TextFormField(
-        controller: businessNameController,
-        decoration: const InputDecoration(labelText: "Firm Name"),
-      ),
-      TextFormField(
-        controller: cityController,
-        decoration: const InputDecoration(labelText: "City"),
-      ),
-      TextFormField(
+      _field(controller: businessNameController, label: "Firm Name"),
+      _field(controller: cityController, label: "City"),
+      _field(
         controller: pincodeController,
-        decoration: const InputDecoration(labelText: "Pincode"),
+        label: "Pincode",
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         validator: validatePincode,
       ),
-      TextFormField(
+      _field(
         controller: addressController,
-        decoration: const InputDecoration(labelText: "Address"),
+        label: "Address",
         validator: (v) => v == null || v.isEmpty ? "Required" : null,
       ),
-      TextFormField(
-        controller: keywordsController,
-        decoration: const InputDecoration(labelText: "Profession"),
-        // validator: (v) => v == null || v.isEmpty ? "Required" : null,
-      ),
-      TextFormField(
+      _field(controller: keywordsController, label: "Profession"),
+      _field(
         controller: emailController,
-        decoration: const InputDecoration(labelText: "Email"),
+        label: "Email",
+        keyboardType: TextInputType.emailAddress,
+        validator: validateEmail,
       ),
-      TextFormField(
+      _field(
         controller: landlineController,
-        decoration: const InputDecoration(labelText: "Land Line"),
+        label: "Land Line",
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        validator: validateLandline,
       ),
-      TextFormField(
+      _field(
         controller: landlineCodeController,
-        decoration: const InputDecoration(labelText: "STD Code"),
+        label: "STD Code",
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        validator: validateStdCode,
       ),
     ],
   );
@@ -196,14 +295,14 @@ class _SignupPageState extends State<SignupPage> {
   // ===== Business Form =====
   Widget _buildBusinessForm() => Column(
     children: [
-      TextFormField(
+      _field(
         controller: businessNameController,
-        decoration: const InputDecoration(labelText: "Firm Name"),
+        label: "Firm Name",
         validator: (v) => v == null || v.isEmpty ? "Required" : null,
       ),
-      TextFormField(
+      _field(
         controller: personNameController,
-        decoration: const InputDecoration(labelText: "Director / Prop / Partner Name"),
+        label: "Director / Prop / Partner Name",
       ),
       DropdownButtonFormField<String>(
         value: personPrefix,
@@ -215,53 +314,61 @@ class _SignupPageState extends State<SignupPage> {
         onChanged: (val) => setState(() => personPrefix = val),
         decoration: const InputDecoration(labelText: "Prefix"),
       ),
-      TextFormField(
+      _field(
         controller: cityController,
-        decoration: const InputDecoration(labelText: "City"),
-        validator: validateCity,
+        label: "City",
+        validator: (v) => v == null || v.trim().isEmpty ? "Enter city" : null,
       ),
-      TextFormField(
+      _field(
         controller: pincodeController,
-        decoration: const InputDecoration(labelText: "Pincode"),
+        label: "Pincode",
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         validator: validatePincode,
       ),
-      TextFormField(
+      _field(
         controller: addressController,
-        decoration: const InputDecoration(labelText: "Address"),
+        label: "Address",
         validator: (v) => v == null || v.isEmpty ? "Required" : null,
       ),
-      TextFormField(
+      _field(
         controller: keywordsController,
-        decoration: const InputDecoration(labelText: "Products"),
+        label: "Products",
         validator: (v) => v == null || v.isEmpty ? "Required" : null,
       ),
-      TextFormField(
+      _field(
         controller: emailController,
-        decoration: const InputDecoration(labelText: "Email"),
+        label: "Email",
+        keyboardType: TextInputType.emailAddress,
+        validator: validateEmail,
       ),
-      TextFormField(
+      _field(
         controller: landlineController,
-        decoration: const InputDecoration(labelText: "Land Line"),
+        label: "Land Line",
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        validator: validateLandline,
       ),
-      TextFormField(
+      _field(
         controller: landlineCodeController,
-        decoration: const InputDecoration(labelText: "STD Code"),
+        label: "STD Code",
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        validator: validateStdCode,
       ),
     ],
   );
 
-  // ===== Signup Submit (same as before) =====
+  // ===== Signup Submit (unchanged) =====
   Future<void> _signup() async {
     if (!_formKey.currentState!.validate()) return;
     final mobile = mobileController.text.trim();
-
     if (_mobileExists) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_mobileMsg ?? "Mobile already registered")),
       );
       return;
     }
-
     setState(() => isLoading = true);
     try {
       final Map<String, dynamic> profile = {
@@ -275,9 +382,7 @@ class _SignupPageState extends State<SignupPage> {
         "landline": landlineController.text.trim(),
         "landline_code": landlineCodeController.text.trim(),
       };
-
       String displayName = "";
-
       if (signupType == "person") {
         profile.addAll({
           "person_name": personNameController.text.trim(),
@@ -297,17 +402,16 @@ class _SignupPageState extends State<SignupPage> {
             ? businessNameController.text.trim()
             : personNameController.text.trim();
       }
-
       await SupabaseService.client.from("profiles").insert(profile);
-
       if (!mounted) return;
-
-      // ✅ Success popup
+      // Success popup
       await showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          title: const Text("Registration Successful 🎉"),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          title: const Text("Registration Successful [Party Popper]"),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -321,7 +425,7 @@ class _SignupPageState extends State<SignupPage> {
               const Text("Password: signpost"),
               const SizedBox(height: 16),
               const Text(
-                "📌 Note: Take Screenshot and Save/Note.",
+                "[Pin] Note: Take Screenshot and Save/Note.",
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -337,7 +441,7 @@ class _SignupPageState extends State<SignupPage> {
                 Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(builder: (_) => const HomePageShell()),
-                      (route) => false,
+                  (route) => false,
                 );
               },
               child: const Text("Continue"),
@@ -347,15 +451,14 @@ class _SignupPageState extends State<SignupPage> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: $e")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
       }
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -370,19 +473,32 @@ class _SignupPageState extends State<SignupPage> {
             padding: const EdgeInsets.all(16),
             child: ToggleButtons(
               isSelected: [signupType == "person", signupType == "business"],
-              onPressed: (index) =>
-                  setState(() => signupType = index == 0 ? "person" : "business"),
+              onPressed: (index) => setState(
+                () => signupType = index == 0 ? "person" : "business",
+              ),
               borderRadius: BorderRadius.circular(12),
               selectedColor: Colors.white,
               fillColor: Theme.of(context).primaryColor,
               children: const [
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(children: [Icon(Icons.person), SizedBox(width: 8), Text("Person")]),
+                  child: Row(
+                    children: [
+                      Icon(Icons.person),
+                      SizedBox(width: 8),
+                      Text("Person"),
+                    ],
+                  ),
                 ),
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(children: [Icon(Icons.business), SizedBox(width: 8), Text("Business")]),
+                  child: Row(
+                    children: [
+                      Icon(Icons.business),
+                      SizedBox(width: 8),
+                      Text("Business"),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -394,29 +510,35 @@ class _SignupPageState extends State<SignupPage> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    // Mobile always first
-                    TextFormField(
+                    // Mobile – 10 digits only
+                    _field(
                       controller: mobileController,
-                      decoration: InputDecoration(
-                        labelText: "Mobile Number",
-                        suffixIcon: _isCheckingMobile
-                            ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                            : (mobileLooksValid && _mobileMsg != null)
-                            ? (_mobileExists
-                            ? const Icon(Icons.error, color: Colors.red)
-                            : const Icon(Icons.check_circle, color: Colors.green))
-                            : null,
-                      ),
+                      label: "Mobile Number",
                       keyboardType: TextInputType.phone,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(10), // max 10
+                      ],
                       validator: validateMobile,
-                      onChanged: _onMobileChanged,
+                      suffixIcon: _isCheckingMobile
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : (mobileLooksValid && _mobileMsg != null)
+                          ? (_mobileExists
+                                ? const Icon(Icons.error, color: Colors.red)
+                                : const Icon(
+                                    Icons.check_circle,
+                                    color: Colors.green,
+                                  ))
+                          : null,
                     ),
                     if (_mobileMsg != null)
                       Padding(
@@ -447,11 +569,13 @@ class _SignupPageState extends State<SignupPage> {
             child: isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : ElevatedButton.icon(
-              onPressed: _signup,
-              style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
-              icon: const Icon(Icons.check_circle),
-              label: Text("Sign Up as ${signupType.capitalize()}"),
-            ),
+                    onPressed: _signup,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    icon: const Icon(Icons.check_circle),
+                    label: Text("Sign Up as ${signupType.capitalize()}"),
+                  ),
           ),
         ],
       ),
@@ -460,5 +584,6 @@ class _SignupPageState extends State<SignupPage> {
 }
 
 extension StringCasingExtension on String {
-  String capitalize() => isEmpty ? this : "${this[0].toUpperCase()}${substring(1)}";
+  String capitalize() =>
+      isEmpty ? this : "${this[0].toUpperCase()}${substring(1)}";
 }

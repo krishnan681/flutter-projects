@@ -1,0 +1,37 @@
+{
+  "title_profile": "சுயவிவரம்",
+  "title_edit_profile": "சுயவிவரத்தைத் திருத்து",
+  "section_product_images": "தயாரிப்பு படங்கள்",
+  "tooltip_add_image": "தயாரிப்பு படத்தைச் சேர்க்கவும்",
+  "label_your_profile": "உங்கள் சுயவிவரம்",
+  "label_default_email": "email@example.com",
+  "label_empty": "<காலியாக உள்ளது>",
+
+  "field_business_name": "வணிகப் பெயர்",
+  "field_person_name": "நபர் பெயர்",
+  "field_address": "முகவரி",
+  "field_keywords": "முக்கிய சொற்கள்",
+  "field_description": "விளக்கம்",
+  "field_city": "நகரம்",
+  "field_pincode": "அஞ்சல் குறியீடு",
+  "field_whats_app": "வாட்ஸ்அப்",
+  "field_email": "மின்னஞ்சல்",
+
+  "btn_save_all": "அனைத்தையும் சேமி",
+  "btn_cancel": "ரத்து செய்",
+
+  "menu_refresh": "சுயவிவரத்தைப் புதுப்பி",
+  "menu_edit": "சுயவிவரத்தைத் திருத்து",
+
+  "msg_user_id_not_found": "பயனர் ஐடி கிடைக்கவில்லை",
+  "msg_load_error": "சுயவிவரத்தை ஏற்றுவதில் பிழை: %s",
+  "msg_profile_updated": "சுயவிவரம் வெற்றிகரமாக புதுப்பிக்கப்பட்டது!",
+  "msg_save_failed": "சேமிப்பு தோல்வி: %s",
+  "msg_image_uploaded": "படம் பதிவேற்றப்பட்டது",
+  "msg_upload_failed": "பதிவேற்றம் தோல்வி: %s",
+  "msg_image_deleted": "படம் நீக்கப்பட்டது",
+  "msg_delete_failed": "நீக்குதல் தோல்வி",
+
+  "settings": "அமைப்புகள்",
+  "language": "மொழி"
+}

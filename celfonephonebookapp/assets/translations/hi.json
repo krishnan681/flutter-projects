@@ -1,0 +1,37 @@
+{
+  "title_profile": "प्रोफ़ाइल",
+  "title_edit_profile": "प्रोफ़ाइल संपादित करें",
+  "section_product_images": "उत्पाद छवियाँ",
+  "tooltip_add_image": "उत्पाद छवि जोड़ें",
+  "label_your_profile": "आपकी प्रोफ़ाइल",
+  "label_default_email": "email@example.com",
+  "label_empty": "<खाली>",
+
+  "field_business_name": "व्यवसाय का नाम",
+  "field_person_name": "व्यक्ति का नाम",
+  "field_address": "पता",
+  "field_keywords": "कीवर्ड्स",
+  "field_description": "विवरण",
+  "field_city": "शहर",
+  "field_pincode": "पिनकोड",
+  "field_whats_app": "व्हाट्सएप",
+  "field_email": "ईमेल",
+
+  "btn_save_all": "सभी सहेजें",
+  "btn_cancel": "रद्द करें",
+
+  "menu_refresh": "प्रोफ़ाइल रिफ्रेश करें",
+  "menu_edit": "प्रोफ़ाइल संपादित करें",
+
+  "msg_user_id_not_found": "उपयोगकर्ता आईडी नहीं मिली",
+  "msg_load_error": "प्रोफ़ाइल लोड करने में त्रुटि: %s",
+  "msg_profile_updated": "प्रोफ़ाइल सफलतापूर्वक अपडेट की गई!",
+  "msg_save_failed": "सहेजना विफल: %s",
+  "msg_image_uploaded": "छवि अपलोड की गई",
+  "msg_upload_failed": "अपलोड विफल: %s",
+  "msg_image_deleted": "छवि हटाई गई",
+  "msg_delete_failed": "हटाना विफल",
+
+  "settings": "सेटिंग्स",
+  "language": "भाषा"
+}

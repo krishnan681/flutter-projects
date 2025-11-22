@@ -37,10 +37,19 @@ class _HomePageShellState extends State<HomePageShell> {
         onTap: _onItemTapped,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-          BottomNavigationBarItem(icon: Icon(Icons.local_offer), label: "Offers"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.local_offer),
+            label: "Offers",
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.search), label: "Search"),
-          BottomNavigationBarItem(icon: Icon(Icons.campaign), label: "Promotion"),
-          BottomNavigationBarItem(icon: Icon(Icons.menu_book), label: "MENU"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.campaign),
+            label: "Promotion",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.menu_book),
+            label: "Settings",
+          ),
         ],
       ),
     );
