@@ -18,7 +18,7 @@ class _HomePageShellState extends State<HomePageShell> {
   final List<Widget> _pages = const [
     HomePage(),
     OffersPage(),
-    SearchPage(),
+    SearchPage(category: ''),
     PromotionPage(),
     SettingsPage(),
   ];

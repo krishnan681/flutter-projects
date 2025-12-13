@@ -1238,51 +1238,51 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   // ------------------- IMAGE UPLOAD -------------------
-  Future<void> _pickAndUploadImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null || _userId == null) return;
+  // Future<void> _pickAndUploadImage() async {
+  //   final picked = await _picker.pickImage(source: ImageSource.gallery);
+  //   if (picked == null || _userId == null) return;
 
-    final file = File(picked.path);
-    final fileName = "${DateTime.now().millisecondsSinceEpoch}_${picked.name}";
+  //   final file = File(picked.path);
+  //   final fileName = "${DateTime.now().millisecondsSinceEpoch}_${picked.name}";
 
-    try {
-      final storagePath = "product_images/$_userId/$fileName";
-      await SupabaseService.client.storage
-          .from("uploads")
-          .upload(storagePath, file);
+  //   try {
+  //     final storagePath = "product_images/$_userId/$fileName";
+  //     await SupabaseService.client.storage
+  //         .from("uploads")
+  //         .upload(storagePath, file);
 
-      final publicUrl = SupabaseService.client.storage
-          .from("uploads")
-          .getPublicUrl(storagePath);
+  //     final publicUrl = SupabaseService.client.storage
+  //         .from("uploads")
+  //         .getPublicUrl(storagePath);
 
-      _uploadedImages.add(publicUrl);
-      await SupabaseService.client
-          .from("profiles")
-          .update({"product_image": _uploadedImages})
-          .eq("id", _userId!);
+  //     _uploadedImages.add(publicUrl);
+  //     await SupabaseService.client
+  //         .from("profiles")
+  //         .update({"product_image": _uploadedImages})
+  //         .eq("id", _userId!);
 
-      setState(() => _refreshCompletion());
-      _showSnackBar("Image uploaded", Icons.check, Colors.green);
-    } catch (e) {
-      _showSnackBar("Upload failed: $e", Icons.error, Colors.red);
-    }
-  }
+  //     setState(() => _refreshCompletion());
+  //     _showSnackBar("Image uploaded", Icons.check, Colors.green);
+  //   } catch (e) {
+  //     _showSnackBar("Upload failed: $e", Icons.error, Colors.red);
+  //   }
+  // }
 
-  // ------------------- IMAGE DELETE -------------------
-  Future<void> _deleteImage(String url) async {
-    if (_userId == null) return;
-    try {
-      _uploadedImages.remove(url);
-      await SupabaseService.client
-          .from("profiles")
-          .update({"product_image": _uploadedImages})
-          .eq("id", _userId!);
-      setState(() => _refreshCompletion());
-      _showSnackBar("Image deleted", Icons.check, Colors.green);
-    } catch (e) {
-      _showSnackBar("Delete failed", Icons.error, Colors.red);
-    }
-  }
+  // // ------------------- IMAGE DELETE -------------------
+  // Future<void> _deleteImage(String url) async {
+  //   if (_userId == null) return;
+  //   try {
+  //     _uploadedImages.remove(url);
+  //     await SupabaseService.client
+  //         .from("profiles")
+  //         .update({"product_image": _uploadedImages})
+  //         .eq("id", _userId!);
+  //     setState(() => _refreshCompletion());
+  //     _showSnackBar("Image deleted", Icons.check, Colors.green);
+  //   } catch (e) {
+  //     _showSnackBar("Delete failed", Icons.error, Colors.red);
+  //   }
+  // }
 
   // ------------------- SNACKBAR -------------------
   void _showSnackBar(String message, IconData icon, Color color) {
@@ -1545,77 +1545,77 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   // ------------------- IMAGE GALLERY -------------------
-  Widget _buildImageGallery() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Text(
-            "Product Images",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: primaryColor,
-            ),
-          ),
-        ),
-        SizedBox(
-          height: 140,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _uploadedImages.length + 1,
-            itemBuilder: (context, index) {
-              if (index == _uploadedImages.length) {
-                return GestureDetector(
-                  onTap: _pickAndUploadImage,
-                  child: Container(
-                    width: 120,
-                    height: 120,
-                    margin: const EdgeInsets.only(right: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(12),
-                      color: Colors.grey[200],
-                    ),
-                    child: const Icon(Icons.add_a_photo, color: Colors.grey),
-                  ),
-                );
-              }
-              final url = _uploadedImages[index];
-              return Stack(
-                children: [
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        url,
-                        width: 120,
-                        height: 120,
-                        fit: BoxFit.cover,
-                        errorBuilder: (c, e, s) =>
-                            const Icon(Icons.broken_image, size: 50),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 0,
-                    right: 8,
-                    child: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteImage(url),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
+  // Widget _buildImageGallery() {
+  //   return Column(
+  //     crossAxisAlignment: CrossAxisAlignment.start,
+  //     children: [
+  //       Padding(
+  //         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  //         child: Text(
+  //           "Product Images",
+  //           style: TextStyle(
+  //             fontSize: 18,
+  //             fontWeight: FontWeight.bold,
+  //             color: primaryColor,
+  //           ),
+  //         ),
+  //       ),
+  //       SizedBox(
+  //         height: 140,
+  //         child: ListView.builder(
+  //           scrollDirection: Axis.horizontal,
+  //           padding: const EdgeInsets.symmetric(horizontal: 16),
+  //           itemCount: _uploadedImages.length + 1,
+  //           itemBuilder: (context, index) {
+  //             if (index == _uploadedImages.length) {
+  //               return GestureDetector(
+  //                 onTap: _pickAndUploadImage,
+  //                 child: Container(
+  //                   width: 120,
+  //                   height: 120,
+  //                   margin: const EdgeInsets.only(right: 8),
+  //                   decoration: BoxDecoration(
+  //                     border: Border.all(color: Colors.grey),
+  //                     borderRadius: BorderRadius.circular(12),
+  //                     color: Colors.grey[200],
+  //                   ),
+  //                   child: const Icon(Icons.add_a_photo, color: Colors.grey),
+  //                 ),
+  //               );
+  //             }
+  //             final url = _uploadedImages[index];
+  //             return Stack(
+  //               children: [
+  //                 Container(
+  //                   margin: const EdgeInsets.only(right: 8),
+  //                   child: ClipRRect(
+  //                     borderRadius: BorderRadius.circular(12),
+  //                     child: Image.network(
+  //                       url,
+  //                       width: 120,
+  //                       height: 120,
+  //                       fit: BoxFit.cover,
+  //                       errorBuilder: (c, e, s) =>
+  //                           const Icon(Icons.broken_image, size: 50),
+  //                     ),
+  //                   ),
+  //                 ),
+  //                 Positioned(
+  //                   top: 0,
+  //                   right: 8,
+  //                   child: IconButton(
+  //                     icon: const Icon(Icons.delete, color: Colors.red),
+  //                     onPressed: () => _deleteImage(url),
+  //                   ),
+  //                 ),
+  //               ],
+  //             );
+  //           },
+  //         ),
+  //       ),
+  //     ],
+  //   );
+  // }
 
   // ------------------- BUILD -------------------
   @override
@@ -1634,12 +1634,12 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _pickAndUploadImage,
-        backgroundColor: accentColor,
-        child: const Icon(Icons.add_a_photo, color: Colors.white),
-        tooltip: "Add Product Image",
-      ),
+      // floatingActionButton: FloatingActionButton(
+      //   onPressed: _pickAndUploadImage,
+      //   backgroundColor: accentColor,
+      //   child: const Icon(Icons.add_a_photo, color: Colors.white),
+      //   tooltip: "Add Product Image",
+      // ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : CustomScrollView(
@@ -1681,7 +1681,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     ]),
                   ),
 
-                SliverToBoxAdapter(child: _buildImageGallery()),
+                // SliverToBoxAdapter(child: _buildImageGallery()),
                 SliverToBoxAdapter(child: const SizedBox(height: 80)),
               ],
             ),

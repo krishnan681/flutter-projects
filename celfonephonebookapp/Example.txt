@@ -1,3 +1,1884 @@
 Create your banner image in Photoshop as:
 
 1080 * 480 pixels
+
+
+
+
+
+
+
+
+
+
+
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../supabase/supabase.dart';
+
+class MediaPartnerSignupPage extends StatefulWidget {
+  const MediaPartnerSignupPage({super.key});
+
+  @override
+  State<MediaPartnerSignupPage> createState() => _MediaPartnerSignupPageState();
+}
+
+class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
+  final _formKey = GlobalKey<FormState>();
+  bool isLoading = false;
+  bool _isPersonSelected = true;
+
+  // Controllers
+  final mobileController = TextEditingController();
+  final emailController = TextEditingController();
+  final cityController = TextEditingController();
+  final pincodeController = TextEditingController();
+  final addressController = TextEditingController();
+  final personNameController = TextEditingController();
+  final professionController = TextEditingController();
+  final businessNameController = TextEditingController();
+  final keywordsController = TextEditingController();
+  final landlineController = TextEditingController();
+  final landlineCodeController = TextEditingController();
+
+  String? personPrefix = "Mr.";
+
+  // Mobile check
+  Timer? _debounce;
+  bool _isCheckingMobile = false;
+  bool _mobileExists = false;
+  String? _mobileMsg;
+  String _lastCheckToken = "";
+
+  // Help visibility flags
+  bool _mobileHelpVisible = false;
+  bool _emailHelpVisible = false;
+  bool _cityHelpVisible = false;
+  bool _pincodeHelpVisible = false;
+  bool _addressHelpVisible = false;
+  bool _personNameHelpVisible = false;
+  bool _businessNameHelpVisible = false;
+  bool _professionHelpVisible = false;
+  bool _landlineCodeHelpVisible = false;
+  bool _landlineHelpVisible = false;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    for (var c in [
+      mobileController,
+      emailController,
+      cityController,
+      pincodeController,
+      addressController,
+      personNameController,
+      professionController,
+      businessNameController,
+      keywordsController,
+      landlineController,
+      landlineCodeController,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // ────────────────────── Clear mode-specific fields ──────────────────────
+  void _clearModeSpecificFields() {
+    if (_isPersonSelected) {
+      businessNameController.clear();
+    } else {
+      personNameController.clear();
+      professionController.clear();
+      personPrefix = "Mr.";
+      keywordsController.clear(); // Safe: profession is gone anyway
+    }
+
+    // Reset all help visibility
+    _mobileHelpVisible = _emailHelpVisible = _cityHelpVisible =
+        _pincodeHelpVisible = _addressHelpVisible = _personNameHelpVisible =
+            _businessNameHelpVisible = _professionHelpVisible =
+                _landlineCodeHelpVisible = _landlineHelpVisible = false;
+
+    setState(() {});
+  }
+
+  // ────────────────────── Mobile check ──────────────────────
+  void _onMobileChanged(String value) {
+    _debounce?.cancel();
+    setState(() {
+      _mobileMsg = null;
+      _mobileExists = false;
+    });
+
+    final trimmed = value.trim();
+    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(trimmed)) return;
+
+    _debounce = Timer(const Duration(milliseconds: 600), () {
+      _checkMobileExists(trimmed);
+    });
+  }
+
+  Future<void> _checkMobileExists(String mobile) async {
+    final token = mobile;
+    setState(() {
+      _isCheckingMobile = true;
+      _lastCheckToken = token;
+    });
+
+    try {
+      final res = await SupabaseService.client
+          .from('profiles')
+          .select('business_name, person_name')
+          .eq('mobile_number', mobile)
+          .maybeSingle();
+
+      if (!mounted || _lastCheckToken != token) return;
+
+      if (res != null) {
+        final business = (res['business_name'] as String?)?.trim();
+        final person = (res['person_name'] as String?)?.trim();
+        setState(() {
+          _mobileExists = true;
+          _mobileMsg = business != null && business.isNotEmpty
+              ? "Already registered: $business"
+              : "Already registered: ${person ?? 'Unknown'}";
+        });
+      } else {
+        setState(() {
+          _mobileExists = false;
+          _mobileMsg = "Available";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _mobileExists = false;
+        _mobileMsg = "Check failed";
+      });
+    } finally {
+      if (mounted && _lastCheckToken == token) {
+        setState(() => _isCheckingMobile = false);
+      }
+    }
+  }
+
+  // ────────────────────── Submit ──────────────────────
+  Future<void> addProfileRecord() async {
+    if (!_formKey.currentState!.validate()) {
+      _showAlert("Missing Fields", "Please fill all required fields.");
+      return;
+    }
+    if (_mobileExists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Mobile number already registered")),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString("userId");
+      final userName = prefs.getString("username");
+      if (userId == null || userName == null)
+        throw Exception("User not logged in");
+
+      final Map<String, dynamic> profile = {
+        "mobile_number": mobileController.text.trim(),
+        "user_type": _isPersonSelected ? "person" : "business",
+
+        if (personNameController.text.trim().isNotEmpty)
+          "person_name": personNameController.text.trim(),
+        if (personPrefix != null && personNameController.text.trim().isNotEmpty)
+          "person_prefix": personPrefix,
+
+        if (!_isPersonSelected)
+          "business_name": businessNameController.text.trim(),
+        if (!_isPersonSelected) "business_prefix": "M/s.",
+
+        if (_isPersonSelected && businessNameController.text.trim().isNotEmpty)
+          "business_name": businessNameController.text.trim(),
+
+        "city": cityController.text.trim(),
+        "pincode": pincodeController.text.trim(),
+        "address": addressController.text.trim(),
+        "email": emailController.text.trim().isEmpty
+            ? null
+            : emailController.text.trim(),
+        "keywords": keywordsController.text.trim().isEmpty
+            ? null
+            : keywordsController.text.trim(),
+        "landline": landlineController.text.trim().isEmpty
+            ? null
+            : landlineController.text.trim(),
+        "landline_code": landlineCodeController.text.trim().isEmpty
+            ? null
+            : landlineCodeController.text.trim(),
+      };
+
+      profile.removeWhere((k, v) => v == null || v.toString().isEmpty);
+
+      await SupabaseService.client.from("profiles").insert(profile);
+
+      // ───── Earnings logic (unchanged) ─────
+      int earningsToAdd = 0;
+      final hasBasicInfo =
+          cityController.text.trim().isNotEmpty &&
+          pincodeController.text.trim().isNotEmpty &&
+          addressController.text.trim().isNotEmpty &&
+          ((_isPersonSelected && personNameController.text.trim().isNotEmpty) ||
+              (!_isPersonSelected &&
+                  businessNameController.text.trim().isNotEmpty));
+
+      if (hasBasicInfo) earningsToAdd += 1;
+      if (keywordsController.text.trim().isNotEmpty) earningsToAdd += 1;
+
+      final now = DateTime.now().toUtc();
+      final todayStart = DateTime.utc(now.year, now.month, now.day);
+      final todayEnd = DateTime.utc(now.year, now.month, now.day, 23, 59, 59);
+
+      final existing = await SupabaseService.client
+          .from("data_entry_table")
+          .select()
+          .eq("user_id", userId)
+          .gte("created_at", todayStart.toIso8601String())
+          .lte("created_at", todayEnd.toIso8601String())
+          .maybeSingle();
+
+      if (existing != null) {
+        await SupabaseService.client
+            .from("data_entry_table")
+            .update({
+              "count": (existing["count"] as int) + 1,
+              "earnings": (existing["earnings"] as int) + earningsToAdd,
+              "updated_at": now.toIso8601String(),
+            })
+            .eq("id", existing["id"]);
+      } else {
+        await SupabaseService.client.from("data_entry_table").insert({
+          "user_id": userId,
+          "user_name": userName,
+          "count": 1,
+          "earnings": earningsToAdd,
+          "created_at": now.toIso8601String(),
+          "updated_at": now.toIso8601String(),
+        });
+      }
+
+      final displayName = _isPersonSelected
+          ? "${personPrefix ?? "Mr."} ${personNameController.text.trim()}"
+          : businessNameController.text.trim();
+
+      final inserted = await SupabaseService.client
+          .from("data_entry_name")
+          .insert({
+            "user_id": userId,
+            "username": userName,
+            "entry_name": displayName.isNotEmpty ? displayName : "Unknown",
+            "created_at": now.toIso8601String(),
+            "updated_at": now.toIso8601String(),
+          })
+          .select()
+          .maybeSingle();
+
+      if (earningsToAdd > 0 && inserted != null) {
+        await SupabaseService.client
+            .from("data_entry_name")
+            .update({"scheme": "You've Earned ₹$earningsToAdd"})
+            .eq("id", inserted["id"]);
+      }
+
+      // Reset form after success
+      for (var c in [
+        mobileController,
+        emailController,
+        cityController,
+        pincodeController,
+        addressController,
+        personNameController,
+        professionController,
+        businessNameController,
+        keywordsController,
+        landlineController,
+        landlineCodeController,
+      ]) {
+        c.clear();
+      }
+      personPrefix = "Mr.";
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 26),
+              SizedBox(width: 12),
+              Text(
+                "Saved successfully!",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  // ────────────────────── Validators ──────────────────────
+  String? validateMobile(String? v) {
+    if (v == null || v.isEmpty) return "Required";
+    if (v.length != 10) return "Exactly 10 digits required";
+    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(v)) return "Must start with 6-9";
+    return null;
+  }
+
+  String? validatePincode(String? v) {
+    if (v == null || v.isEmpty) return "Required";
+    if (!RegExp(r'^\d{6}$').hasMatch(v)) return "Must be 6 digits";
+    return null;
+  }
+
+  String? mandatory(String? v) =>
+      (v?.trim().isEmpty ?? true) ? "Required" : null;
+
+  void _showAlert(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ────────────────────── Help Text Widget ──────────────────────
+  Widget _helpText(String text, bool visible) {
+    if (!visible) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, left: 4),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 11,
+          color: Colors.red,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────── Reusable Smart TextField (FIXED) ──────────────────────
+  Widget _smartTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    required String helpText,
+    required bool Function() isHelpVisible,
+    required VoidCallback onTapShowHelp,
+    int maxLines = 1,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+    Function(String)? onChanged,
+    bool isRequired = true,
+  }) {
+    final showHelp = isHelpVisible() && controller.text.isEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: controller,
+          maxLines: maxLines,
+          keyboardType: keyboardType,
+          inputFormatters: keyboardType == TextInputType.phone
+              ? [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(10),
+                ]
+              : null,
+          decoration: InputDecoration(
+            labelText: label,
+            prefixIcon: Icon(icon, size: 20),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 12,
+              horizontal: 16,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.grey, width: 0.6),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: Colors.blueAccent,
+                width: 1.2,
+              ),
+            ),
+          ),
+          validator: isRequired ? validator : null,
+          onChanged: (v) {
+            onChanged?.call(v);
+            if (controller.text.isNotEmpty) setState(() {});
+          },
+          onTap: onTapShowHelp,
+        ),
+        _helpText(helpText, showHelp),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xfff4f6fa),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              // Header
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 40,
+                  horizontal: 20,
+                ),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xff0072ff), Color(0xff00c6ff)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(28),
+                    bottomRight: Radius.circular(28),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      "Media Partner Data Entry",
+                      style: TextStyle(
+                        fontSize: 22,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildModeButton("Person", true),
+                        const SizedBox(width: 12),
+                        _buildModeButton("Business", false),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Form
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    children: [
+                      // Mobile
+                      _smartTextField(
+                        controller: mobileController,
+                        label: "Mobile Number *",
+                        icon: Icons.phone,
+                        helpText: "Enter exactly 10 digits (starts with 6-9)",
+                        isHelpVisible: () => _mobileHelpVisible,
+                        onTapShowHelp: () =>
+                            setState(() => _mobileHelpVisible = true),
+                        keyboardType: TextInputType.phone,
+                        validator: validateMobile,
+                        onChanged: _onMobileChanged,
+                      ),
+                      if (_mobileMsg != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6, right: 280),
+                          child: Text(
+                            _mobileMsg!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _mobileExists ? Colors.red : Colors.green,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 20),
+
+                      // Conditional fields
+                      Column(
+                        children: _isPersonSelected
+                            ? _personFields()
+                            : _businessFields(),
+                      ),
+
+                      const SizedBox(height: 28),
+
+                      // Submit button
+                      _buildSubmitButton(),
+                      const SizedBox(height: 30),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────── Mode Toggle Buttons ──────────────────────
+  Widget _buildModeButton(String title, bool isPerson) {
+    final active = _isPersonSelected == isPerson;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          if (_isPersonSelected != isPerson) {
+            setState(() => _isPersonSelected = isPerson);
+            _clearModeSpecificFields();
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white),
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: Colors.white.withOpacity(0.4),
+                      blurRadius: 6,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : [],
+          ),
+          child: Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: active ? const Color(0xff0072ff) : Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────── Person Fields ──────────────────────
+  List<Widget> _personFields() => [
+    _smartTextField(
+      controller: personNameController,
+      label: "Person Name *",
+      icon: Icons.person,
+      helpText: "Enter full name",
+      isHelpVisible: () => _personNameHelpVisible,
+      onTapShowHelp: () => setState(() => _personNameHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _prefixRadio(
+      "Prefix",
+      personPrefix,
+      (v) => setState(() => personPrefix = v),
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: cityController,
+      label: "City *",
+      icon: Icons.location_city,
+      helpText: "e.g. Mumbai",
+      isHelpVisible: () => _cityHelpVisible,
+      onTapShowHelp: () => setState(() => _cityHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: pincodeController,
+      label: "Pincode *",
+      icon: Icons.pin,
+      helpText: "6 digits",
+      isHelpVisible: () => _pincodeHelpVisible,
+      onTapShowHelp: () => setState(() => _pincodeHelpVisible = true),
+      validator: validatePincode,
+      keyboardType: TextInputType.number,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: addressController,
+      label: "Address *",
+      icon: Icons.home,
+      helpText: "Complete address",
+      isHelpVisible: () => _addressHelpVisible,
+      onTapShowHelp: () => setState(() => _addressHelpVisible = true),
+      maxLines: 2,
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: professionController,
+      label: "Profession",
+      icon: Icons.work,
+      helpText: "Job / business type",
+      isHelpVisible: () => _professionHelpVisible,
+      onTapShowHelp: () => setState(() => _professionHelpVisible = true),
+      onChanged: (v) => keywordsController.text = v,
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: emailController,
+      label: "Email",
+      icon: Icons.email,
+      helpText: "Optional",
+      isHelpVisible: () => _emailHelpVisible,
+      onTapShowHelp: () => setState(() => _emailHelpVisible = true),
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    Row(
+      children: [
+        Expanded(
+          child: _smartTextField(
+            controller: landlineCodeController,
+            label: "STD Code",
+            icon: Icons.dialpad,
+            helpText: "e.g. 022",
+            isHelpVisible: () => _landlineCodeHelpVisible,
+            onTapShowHelp: () =>
+                setState(() => _landlineCodeHelpVisible = true),
+            keyboardType: TextInputType.number,
+            isRequired: false,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _smartTextField(
+            controller: landlineController,
+            label: "Landline",
+            icon: Icons.phone,
+            helpText: "Optional",
+            isHelpVisible: () => _landlineHelpVisible,
+            onTapShowHelp: () => setState(() => _landlineHelpVisible = true),
+            isRequired: false,
+          ),
+        ),
+      ],
+    ),
+  ];
+
+  // ────────────────────── Business Fields ──────────────────────
+  List<Widget> _businessFields() => [
+    _smartTextField(
+      controller: businessNameController,
+      label: "Business Name *",
+      icon: Icons.store,
+      helpText: "Full business name",
+      isHelpVisible: () => _businessNameHelpVisible,
+      onTapShowHelp: () => setState(() => _businessNameHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: personNameController,
+      label: "Contact Person",
+      icon: Icons.person_outline,
+      helpText: "Optional",
+      isHelpVisible: () => _personNameHelpVisible,
+      onTapShowHelp: () => setState(() => _personNameHelpVisible = true),
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    _prefixRadio(
+      "Prefix",
+      personPrefix,
+      (v) => setState(() => personPrefix = v),
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: cityController,
+      label: "City *",
+      icon: Icons.location_city,
+      helpText: "e.g. Mumbai",
+      isHelpVisible: () => _cityHelpVisible,
+      onTapShowHelp: () => setState(() => _cityHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: pincodeController,
+      label: "Pincode *",
+      icon: Icons.pin,
+      helpText: "6 digits",
+      isHelpVisible: () => _pincodeHelpVisible,
+      onTapShowHelp: () => setState(() => _pincodeHelpVisible = true),
+      validator: validatePincode,
+      keyboardType: TextInputType.number,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: addressController,
+      label: "Address *",
+      icon: Icons.home,
+      helpText: "Complete address",
+      isHelpVisible: () => _addressHelpVisible,
+      onTapShowHelp: () => setState(() => _addressHelpVisible = true),
+      maxLines: 2,
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: professionController,
+      label: "Products/Services",
+      icon: Icons.category,
+      helpText: "Main offerings",
+      isHelpVisible: () => _professionHelpVisible,
+      onTapShowHelp: () => setState(() => _professionHelpVisible = true),
+      onChanged: (v) => keywordsController.text = v,
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: emailController,
+      label: "Email",
+      icon: Icons.email,
+      helpText: "Optional",
+      isHelpVisible: () => _emailHelpVisible,
+      onTapShowHelp: () => setState(() => _emailHelpVisible = true),
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    Row(
+      children: [
+        Expanded(
+          child: _smartTextField(
+            controller: landlineCodeController,
+            label: "STD Code",
+            icon: Icons.dialpad,
+            helpText: "e.g. 022",
+            isHelpVisible: () => _landlineCodeHelpVisible,
+            onTapShowHelp: () =>
+                setState(() => _landlineCodeHelpVisible = true),
+            keyboardType: TextInputType.number,
+            isRequired: false,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _smartTextField(
+            controller: landlineController,
+            label: "Landline",
+            icon: Icons.phone,
+            helpText: "Optional",
+            isHelpVisible: () => _landlineHelpVisible,
+            onTapShowHelp: () => setState(() => _landlineHelpVisible = true),
+            isRequired: false,
+          ),
+        ),
+      ],
+    ),
+  ];
+
+  // ────────────────────── Prefix Radio ──────────────────────
+  Widget _prefixRadio(
+    String label,
+    String? value,
+    Function(String?) onChanged,
+  ) {
+    return Row(
+      children: [
+        Text("$label: ", style: const TextStyle(fontWeight: FontWeight.w600)),
+        Radio<String>(value: "Mr.", groupValue: value, onChanged: onChanged),
+        const Text("Mr."),
+        Radio<String>(value: "Ms.", groupValue: value, onChanged: onChanged),
+        const Text("Ms."),
+      ],
+    );
+  }
+
+  // ────────────────────── Submit Button ──────────────────────
+  Widget _buildSubmitButton() {
+    return Center(
+      child: ElevatedButton(
+        onPressed: isLoading ? null : addProfileRecord,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xff0072ff),
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        child: isLoading
+            ? const CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              )
+            : Text(
+                _isPersonSelected
+                    ? "Save Person Profile"
+                    : "Save Business Profile",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+orignal code 
+
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import '../supabase/supabase.dart';
+import '../screens/earningDetailsPage.dart';
+
+class MediaPartnerSignupPage extends StatefulWidget {
+  const MediaPartnerSignupPage({super.key});
+
+  @override
+  State<MediaPartnerSignupPage> createState() => _MediaPartnerSignupPageState();
+}
+
+class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
+  final _formKey = GlobalKey<FormState>();
+  bool isLoading = false;
+  bool _isPersonSelected = true;
+
+  // Controllers
+  final mobileController = TextEditingController();
+  final emailController = TextEditingController();
+  final cityController = TextEditingController();
+  final pincodeController = TextEditingController();
+  final addressController = TextEditingController();
+  final personNameController = TextEditingController();
+  final professionController = TextEditingController();
+  final businessNameController = TextEditingController();
+  final keywordsController = TextEditingController();
+  final landlineController = TextEditingController();
+  final landlineCodeController = TextEditingController();
+
+  String? personPrefix = "Mr.";
+  String? businessPrefix = "M/s.";
+
+  // Image picker
+  final ImagePicker _picker = ImagePicker();
+  List<File> _selectedImages = [];
+
+  // OCR
+  final TextRecognizer _textRecognizer = TextRecognizer();
+  File? _ocrImageFile;
+  bool _ocrRunning = false;
+
+  // Mobile validation
+  Timer? _debounce;
+  bool _isCheckingMobile = false;
+  bool _mobileExists = false;
+  String? _mobileMsg;
+  String _lastCheckToken = "";
+
+  // Help visibility flags
+  bool _mobileHelpVisible = false;
+  bool _emailHelpVisible = false;
+  bool _cityHelpVisible = false;
+  bool _pincodeHelpVisible = false;
+  bool _addressHelpVisible = false;
+  bool _personNameHelpVisible = false;
+  bool _businessNameHelpVisible = false;
+  bool _professionHelpVisible = false;
+  bool _landlineCodeHelpVisible = false;
+  bool _landlineHelpVisible = false;
+
+  // Prefix removal flags
+  bool _mobilePrefixRemoved = false;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _textRecognizer.close();
+    for (var c in [
+      mobileController,
+      emailController,
+      cityController,
+      pincodeController,
+      addressController,
+      personNameController,
+      professionController,
+      businessNameController,
+      keywordsController,
+      landlineController,
+      landlineCodeController,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // ────────────────────── Mobile Check ──────────────────────
+  void _onMobileChanged(String value) {
+    _debounce?.cancel();
+    setState(() {
+      _mobileMsg = null;
+      _mobileExists = false;
+    });
+
+    final trimmed = value.trim();
+    final isPatternOk = RegExp(r'^[6-9]\d{9}$').hasMatch(trimmed);
+    if (!isPatternOk) return;
+
+    _debounce = Timer(const Duration(milliseconds: 600), () {
+      _checkMobileExists(trimmed);
+    });
+  }
+
+  Future<void> _checkMobileExists(String mobile) async {
+    final checkToken = mobile;
+    setState(() {
+      _isCheckingMobile = true;
+      _lastCheckToken = checkToken;
+    });
+
+    try {
+      final res = await SupabaseService.client
+          .from('profiles')
+          .select('business_name, person_name')
+          .eq('mobile_number', mobile)
+          .maybeSingle();
+
+      if (!mounted || _lastCheckToken != checkToken) return;
+
+      if (res != null) {
+        final business = (res['business_name'] as String?)?.trim();
+        final person = (res['person_name'] as String?)?.trim();
+        setState(() {
+          _mobileExists = true;
+          _mobileMsg = business != null && business.isNotEmpty
+              ? "Already registered: $business"
+              : "Already registered: ${person ?? 'Unknown'}";
+        });
+      } else {
+        setState(() {
+          _mobileExists = false;
+          _mobileMsg = "Available";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _mobileExists = false;
+        _mobileMsg = "Check failed";
+      });
+    } finally {
+      if (mounted && _lastCheckToken == checkToken) {
+        setState(() => _isCheckingMobile = false);
+      }
+    }
+  }
+
+  // ────────────────────── SUBMIT + NAVIGATE TO EARNINGS ──────────────────────
+  Future<void> addProfileRecord() async {
+    if (!_formKey.currentState!.validate()) {
+      _showAlert("Missing Fields", "Please fill all required fields.");
+      return;
+    }
+    if (_mobileExists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Mobile number already registered")),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString("userId");
+      final userName = prefs.getString("username");
+      if (userId == null || userName == null) {
+        throw Exception("User not logged in");
+      }
+
+      // CORRECTED: person_name = only name, person_prefix = Mr./Ms.
+      final Map<String, dynamic> profile = {
+        "mobile_number": mobileController.text.trim(),
+        "user_type": _isPersonSelected ? "person" : "business",
+
+        // Always save person_name and person_prefix if provided
+        if (personNameController.text.trim().isNotEmpty)
+          "person_name": personNameController.text.trim(),
+
+        if (personPrefix != null && personNameController.text.trim().isNotEmpty)
+          "person_prefix": personPrefix,
+
+        // Business-specific
+        if (!_isPersonSelected)
+          "business_name": businessNameController.text.trim(),
+        if (!_isPersonSelected) "business_prefix": "M/s.",
+
+        // Person-specific business name (optional firm name for individuals)
+        if (_isPersonSelected && businessNameController.text.trim().isNotEmpty)
+          "business_name": businessNameController.text.trim(),
+
+        // Common fields
+        "city": cityController.text.trim(),
+        "pincode": pincodeController.text.trim(),
+        "address": addressController.text.trim(),
+        "email": emailController.text.trim().isEmpty
+            ? null
+            : emailController.text.trim(),
+        "keywords": keywordsController.text.trim().isEmpty
+            ? null
+            : keywordsController.text.trim(),
+        "landline": landlineController.text.trim().isEmpty
+            ? null
+            : landlineController.text.trim(),
+        "landline_code": landlineCodeController.text.trim().isEmpty
+            ? null
+            : landlineCodeController.text.trim(),
+      };
+
+      profile.removeWhere(
+        (key, value) => value == null || value.toString().isEmpty,
+      );
+
+      await SupabaseService.client.from("profiles").insert(profile);
+
+      // ────── Earnings (unchanged) ──────
+      int earningsToAdd = 0;
+      final hasBasicInfo =
+          cityController.text.trim().isNotEmpty &&
+          pincodeController.text.trim().isNotEmpty &&
+          addressController.text.trim().isNotEmpty &&
+          ((_isPersonSelected && personNameController.text.trim().isNotEmpty) ||
+              (!_isPersonSelected &&
+                  businessNameController.text.trim().isNotEmpty));
+
+      if (hasBasicInfo) earningsToAdd += 1;
+      if (keywordsController.text.trim().isNotEmpty) earningsToAdd += 1;
+
+      final now = DateTime.now().toUtc();
+      final todayStart = DateTime.utc(now.year, now.month, now.day);
+      final todayEnd = DateTime.utc(now.year, now.month, now.day, 23, 59, 59);
+
+      final existing = await SupabaseService.client
+          .from("data_entry_table")
+          .select()
+          .eq("user_id", userId)
+          .gte("created_at", todayStart.toIso8601String())
+          .lte("created_at", todayEnd.toIso8601String())
+          .maybeSingle();
+
+      if (existing != null) {
+        await SupabaseService.client
+            .from("data_entry_table")
+            .update({
+              "count": (existing["count"] as int) + 1,
+              "earnings": (existing["earnings"] as int) + earningsToAdd,
+              "updated_at": now.toIso8601String(),
+            })
+            .eq("id", existing["id"]);
+      } else {
+        await SupabaseService.client.from("data_entry_table").insert({
+          "user_id": userId,
+          "user_name": userName,
+          "count": 1,
+          "earnings": earningsToAdd,
+          "created_at": now.toIso8601String(),
+          "updated_at": now.toIso8601String(),
+        });
+      }
+
+      // Entry name for history – show with prefix (only for display)
+      final displayName = _isPersonSelected
+          ? "${personPrefix ?? "Mr."} ${personNameController.text.trim()}"
+          : businessNameController.text.trim();
+
+      final inserted = await SupabaseService.client
+          .from("data_entry_name")
+          .insert({
+            "user_id": userId,
+            "username": userName,
+            "entry_name": displayName.isNotEmpty ? displayName : "Unknown",
+            "created_at": now.toIso8601String(),
+            "updated_at": now.toIso8601String(),
+          })
+          .select()
+          .maybeSingle();
+
+      if (earningsToAdd > 0 && inserted != null) {
+        await SupabaseService.client
+            .from("data_entry_name")
+            .update({"scheme": "You've Earned ₹$earningsToAdd"})
+            .eq("id", inserted["id"]);
+      }
+
+      // ────── Reset Form (keep last selected prefix) ──────
+      for (var c in [
+        mobileController,
+        emailController,
+        cityController,
+        pincodeController,
+        addressController,
+        personNameController,
+        professionController,
+        businessNameController,
+        keywordsController,
+        landlineController,
+        landlineCodeController,
+      ]) {
+        c.clear();
+      }
+
+      setState(() {
+        _selectedImages.clear();
+        _ocrImageFile = null;
+        _mobileHelpVisible = _emailHelpVisible = _cityHelpVisible =
+            _pincodeHelpVisible = _addressHelpVisible = _personNameHelpVisible =
+                _businessNameHelpVisible = _professionHelpVisible =
+                    _landlineCodeHelpVisible = _landlineHelpVisible = false;
+      });
+
+      // Success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 26),
+              SizedBox(width: 12),
+              Text(
+                "Saved successfully!",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  // ────────────────────── Validators ──────────────────────
+  String? validateMobile(String? v) {
+    if (v == null || v.isEmpty) return "Required";
+    if (v.length != 10) return "Exactly 10 digits required";
+    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(v)) return "Must start with 6-9";
+    return null;
+  }
+
+  String? validatePincode(String? v) {
+    if (v == null || v.isEmpty) return "Required";
+    if (!RegExp(r'^\d{6}$').hasMatch(v)) return "Must be 6 digits";
+    return null;
+  }
+
+  String? mandatory(String? v) =>
+      (v?.trim().isEmpty ?? true) ? "Required" : null;
+
+  // ────────────────────── SHOW ALERT ──────────────────────
+  void _showAlert(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ────────────────────── HELP TEXT WIDGET ──────────────────────
+  Widget _helpText(String text, bool visible) {
+    if (!visible) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, left: 4),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 11,
+          color: Colors.red,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────── REUSABLE SMART TEXT FIELD ──────────────────────
+  Widget _smartTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    required String helpText,
+    required bool Function() isHelpVisible,
+    required VoidCallback onTapShowHelp,
+    int maxLines = 1,
+    TextInputType? keyboard,
+    String? Function(String?)? validator,
+    Function(String)? onChanged,
+    bool isRequired = true,
+    List<TextInputFormatter>? inputFormatters,
+  }) {
+    final showHelp = isHelpVisible() && controller.text.isEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: controller,
+          maxLines: maxLines,
+          keyboardType: keyboard,
+          inputFormatters:
+              inputFormatters ??
+              (keyboard == TextInputType.phone
+                  ? [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(
+                        10,
+                      ), // ← ENFORCED 10 DIGITS
+                    ]
+                  : null),
+          decoration: InputDecoration(
+            labelText: label,
+            // prefixText: hasPrefix && !prefixRemoved ? prefixText : null,
+            prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+            prefixIcon: Icon(icon, size: 20),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 12,
+              horizontal: 16,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.grey, width: 0.6),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: Colors.blueAccent,
+                width: 1.2,
+              ),
+            ),
+          ),
+          validator: isRequired ? validator : null,
+          onChanged: (v) {
+            onChanged?.call(v);
+            if (controller.text.isNotEmpty) setState(() {});
+          },
+          onTap: () {
+            onTapShowHelp();
+          },
+          onEditingComplete: () => setState(() {}),
+        ),
+        _helpText(helpText, showHelp),
+      ],
+    );
+  }
+
+  // ────────────────────── UI ──────────────────────
+  @override
+  Widget build(BuildContext context) {
+    final mobile = mobileController.text.trim();
+    final mobileValid = RegExp(r'^[6-9]\d{9}$').hasMatch(mobile);
+
+    return Scaffold(
+      backgroundColor: const Color(0xfff4f6fa),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              // Gradient Header
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 40,
+                  horizontal: 20,
+                ),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xff0072ff), Color(0xff00c6ff)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(28),
+                    bottomRight: Radius.circular(28),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const Text(
+                      "Media Partner Data Entry",
+                      style: TextStyle(
+                        fontSize: 22,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildModeButton("Person", true),
+                        const SizedBox(width: 12),
+                        _buildModeButton("Business", false),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Form Card
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: const Color(0xfff4f6fa),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // OCR Buttons (Business only)
+                        if (!_isPersonSelected) ...[
+                          Row(),
+
+                          if (_ocrImageFile != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.file(
+                                  _ocrImageFile!,
+                                  height: 150,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 12),
+                        ],
+
+                        // Mobile Field
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _smartTextField(
+                            controller: mobileController,
+                            label: "Mobile Number *",
+                            icon: Icons.phone,
+                            helpText:
+                                "Enter exactly 10 digits (starts with 6-9)",
+                            isHelpVisible: () => _mobileHelpVisible,
+                            onTapShowHelp: () =>
+                                setState(() => _mobileHelpVisible = true),
+                            keyboard: TextInputType.phone,
+                            validator: validateMobile,
+                            onChanged: _onMobileChanged,
+                            // ADD THIS: Limit to exactly 10 digits
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(
+                                10,
+                              ), // ← NEW: Max 10 chars
+                            ],
+                          ),
+                        ),
+                        if (_mobileMsg != null &&
+                            !(_mobileHelpVisible &&
+                                mobileController.text.isEmpty))
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6, left: 20),
+                            child: Text(
+                              _mobileMsg!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _mobileExists
+                                    ? Colors.red
+                                    : Colors.green,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 20),
+
+                        // Conditional Fields
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: _isPersonSelected
+                                ? _personFields()
+                                : _businessFields(),
+                          ),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Images
+                        // Padding(
+                        //   padding: const EdgeInsets.symmetric(horizontal: 16),
+                        //   child: _buildImageSection(),
+                        // ),
+                        const SizedBox(height: 28),
+
+                        // Submit
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _buildSubmitButton(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 30),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // UI Widgets
+  Widget _buildModeButton(String title, bool isPerson) {
+    final isActive = _isPersonSelected == isPerson;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _isPersonSelected = isPerson),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isActive ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: Colors.white.withOpacity(0.4),
+                      blurRadius: 6,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : [],
+          ),
+          child: Center(
+            child: Text(
+              title,
+              style: TextStyle(
+                color: isActive ? const Color(0xff0072ff) : Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 16,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _personFields() => [
+    _smartTextField(
+      controller: personNameController,
+      label: "Person Name *",
+      icon: Icons.person,
+      helpText: "Enter full name (e.g. John Doe)",
+      isHelpVisible: () => _personNameHelpVisible,
+      onTapShowHelp: () => setState(() => _personNameHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _prefixRadio(
+      "Prefix",
+      personPrefix,
+      (v) => setState(() => personPrefix = v),
+    ),
+    const SizedBox(height: 12),
+
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: cityController,
+      label: "City *",
+      icon: Icons.location_city,
+      helpText: "Enter city name (e.g. Mumbai)",
+      isHelpVisible: () => _cityHelpVisible,
+      onTapShowHelp: () => setState(() => _cityHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: pincodeController,
+      label: "Pincode *",
+      icon: Icons.pin,
+      helpText: "Enter 6-digit pincode",
+      isHelpVisible: () => _pincodeHelpVisible,
+      onTapShowHelp: () => setState(() => _pincodeHelpVisible = true),
+      validator: validatePincode,
+      keyboard: TextInputType.number,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: addressController,
+      label: "Address *",
+      icon: Icons.home,
+      helpText: "Enter complete address with landmarks",
+      isHelpVisible: () => _addressHelpVisible,
+      onTapShowHelp: () => setState(() => _addressHelpVisible = true),
+      maxLines: 2,
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: professionController,
+      label: "Profession",
+      icon: Icons.work,
+      helpText: "Enter your job or business type",
+      isHelpVisible: () => _professionHelpVisible,
+      onTapShowHelp: () => setState(() => _professionHelpVisible = true),
+      onChanged: (v) => keywordsController.text = v,
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: emailController,
+      label: "Email",
+      icon: Icons.email,
+      helpText: "Enter valid email (e.g. name@domain.com)",
+      isHelpVisible: () => _emailHelpVisible,
+      onTapShowHelp: () => setState(() => _emailHelpVisible = true),
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    Row(
+      children: [
+        Expanded(
+          child: _smartTextField(
+            controller: landlineCodeController,
+            label: "STD Code",
+            icon: Icons.dialpad,
+            helpText: "Enter area code (e.g. 022)",
+            isHelpVisible: () => _landlineCodeHelpVisible,
+            onTapShowHelp: () =>
+                setState(() => _landlineCodeHelpVisible = true),
+            keyboard: TextInputType.number,
+            isRequired: false,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _smartTextField(
+            controller: landlineController,
+            label: "Landline",
+            icon: Icons.phone,
+            helpText: "Enter landline number",
+            isHelpVisible: () => _landlineHelpVisible,
+            onTapShowHelp: () => setState(() => _landlineHelpVisible = true),
+            isRequired: false,
+          ),
+        ),
+      ],
+    ),
+  ];
+
+  List<Widget> _businessFields() => [
+    _smartTextField(
+      controller: businessNameController,
+      label: "Business Name *",
+      icon: Icons.store,
+      helpText: "Enter full business name",
+      isHelpVisible: () => _businessNameHelpVisible,
+      onTapShowHelp: () => setState(() => _businessNameHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: personNameController,
+      label: "Contact Person",
+      icon: Icons.person_outline,
+      helpText: "Enter contact person's name",
+      isHelpVisible: () => _personNameHelpVisible,
+      onTapShowHelp: () => setState(() => _personNameHelpVisible = true),
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    _prefixRadio(
+      "Prefix",
+      personPrefix,
+      (v) => setState(() => personPrefix = v),
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: cityController,
+      label: "City *",
+      icon: Icons.location_city,
+      helpText: "Enter city name (e.g. Mumbai)",
+      isHelpVisible: () => _cityHelpVisible,
+      onTapShowHelp: () => setState(() => _cityHelpVisible = true),
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: pincodeController,
+      label: "Pincode *",
+      icon: Icons.pin,
+      helpText: "Enter 6-digit pincode",
+      isHelpVisible: () => _pincodeHelpVisible,
+      onTapShowHelp: () => setState(() => _pincodeHelpVisible = true),
+      validator: validatePincode,
+      keyboard: TextInputType.number,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: addressController,
+      label: "Address *",
+      icon: Icons.home,
+      helpText: "Enter complete business address",
+      isHelpVisible: () => _addressHelpVisible,
+      onTapShowHelp: () => setState(() => _addressHelpVisible = true),
+      maxLines: 2,
+      validator: mandatory,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: professionController,
+      label: "Products/Services",
+      icon: Icons.category,
+      helpText: "List main products or services",
+      isHelpVisible: () => _professionHelpVisible,
+      onTapShowHelp: () => setState(() => _professionHelpVisible = true),
+      onChanged: (v) => keywordsController.text = v,
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    _smartTextField(
+      controller: emailController,
+      label: "Email",
+      icon: Icons.email,
+      helpText: "Enter business email",
+      isHelpVisible: () => _emailHelpVisible,
+      onTapShowHelp: () => setState(() => _emailHelpVisible = true),
+      isRequired: false,
+    ),
+    const SizedBox(height: 12),
+    Row(
+      children: [
+        Expanded(
+          child: _smartTextField(
+            controller: landlineCodeController,
+            label: "STD Code",
+            icon: Icons.dialpad,
+            helpText: "Enter STD code (e.g. 022)",
+            isHelpVisible: () => _landlineCodeHelpVisible,
+            onTapShowHelp: () =>
+                setState(() => _landlineCodeHelpVisible = true),
+            keyboard: TextInputType.number,
+            isRequired: false,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _smartTextField(
+            controller: landlineController,
+            label: "Landline",
+            icon: Icons.phone,
+            helpText: "Enter landline number",
+            isHelpVisible: () => _landlineHelpVisible,
+            onTapShowHelp: () => setState(() => _landlineHelpVisible = true),
+            isRequired: false,
+          ),
+        ),
+      ],
+    ),
+  ];
+
+  Widget _prefixRadio(
+    String label,
+    String? value,
+    Function(String?) onChanged,
+  ) {
+    return Row(
+      children: [
+        Text("$label: ", style: const TextStyle(fontWeight: FontWeight.w600)),
+        Radio<String>(value: "Mr.", groupValue: value, onChanged: onChanged),
+        const Text("Mr."),
+        Radio<String>(value: "Ms.", groupValue: value, onChanged: onChanged),
+        const Text("Ms."),
+      ],
+    );
+  }
+
+  // Widget _buildImageSection() {
+  //   return Column(
+  //     crossAxisAlignment: CrossAxisAlignment.start,
+  //     children: [
+  //       const Text(
+  //         "Upload Photos (Optional)",
+  //         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+  //       ),
+  //       const SizedBox(height: 12),
+  //       if (_selectedImages.isEmpty)
+  //         OutlinedButton.icon(
+  //           onPressed: _pickImages,
+  //           icon: const Icon(Icons.add_a_photo),
+  //           label: const Text("Add Images"),
+  //           style: OutlinedButton.styleFrom(
+  //             side: const BorderSide(color: Colors.blueAccent),
+  //             shape: RoundedRectangleBorder(
+  //               borderRadius: BorderRadius.circular(12),
+  //             ),
+  //           ),
+  //         )
+  //       else
+  //         Wrap(
+  //           spacing: 12,
+  //           runSpacing: 12,
+  //           children: _selectedImages.asMap().entries.map((e) {
+  //             return Stack(
+  //               children: [
+  //                 ClipRRect(
+  //                   borderRadius: BorderRadius.circular(12),
+  //                   child: Image.file(
+  //                     e.value,
+  //                     width: 100,
+  //                     height: 100,
+  //                     fit: BoxFit.cover,
+  //                   ),
+  //                 ),
+  //                 Positioned(
+  //                   top: 4,
+  //                   right: 4,
+  //                   child: IconButton(
+  //                     icon: const Icon(
+  //                       Icons.close,
+  //                       color: Colors.white,
+  //                       size: 18,
+  //                     ),
+  //                     onPressed: () => _removeImage(e.key),
+  //                     style: IconButton.styleFrom(
+  //                       backgroundColor: Colors.black54,
+  //                     ),
+  //                   ),
+  //                 ),
+  //               ],
+  //             );
+  //           }).toList(),
+  //         ),
+  //     ],
+  //   );
+  // }
+
+  Widget _buildSubmitButton() {
+    return Center(
+      child: ElevatedButton(
+        onPressed: isLoading ? null : addProfileRecord,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xff0072ff),
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        child: isLoading
+            ? const CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              )
+            : Text(
+                _isPersonSelected
+                    ? "Save Person Profile"
+                    : "Save Business Profile",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+      ),
+    );
+  }
+}

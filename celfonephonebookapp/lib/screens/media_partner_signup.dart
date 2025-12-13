@@ -690,13 +690,10 @@
 // }
 
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import '../supabase/supabase.dart';
 
 class MediaPartnerSignupPage extends StatefulWidget {
@@ -725,43 +722,29 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
   final landlineCodeController = TextEditingController();
 
   String? personPrefix = "Mr.";
-  String? businessPrefix = "M/s.";
 
-  // Image picker
-  final ImagePicker _picker = ImagePicker();
-  List<File> _selectedImages = [];
-
-  // OCR
-  final TextRecognizer _textRecognizer = TextRecognizer();
-  File? _ocrImageFile;
-  bool _ocrRunning = false;
-
-  // Mobile validation
+  // Mobile check
   Timer? _debounce;
   bool _isCheckingMobile = false;
   bool _mobileExists = false;
   String? _mobileMsg;
   String _lastCheckToken = "";
 
-  // Help visibility flags
+  // Help visibility flags — only ONE will be true at a time
   bool _mobileHelpVisible = false;
-  bool _emailHelpVisible = false;
+  bool _personNameHelpVisible = false;
+  bool _businessNameHelpVisible = false;
   bool _cityHelpVisible = false;
   bool _pincodeHelpVisible = false;
   bool _addressHelpVisible = false;
-  bool _personNameHelpVisible = false;
-  bool _businessNameHelpVisible = false;
   bool _professionHelpVisible = false;
+  bool _emailHelpVisible = false;
   bool _landlineCodeHelpVisible = false;
   bool _landlineHelpVisible = false;
-
-  // Prefix removal flags
-  bool _mobilePrefixRemoved = false;
 
   @override
   void dispose() {
     _debounce?.cancel();
-    _textRecognizer.close();
     for (var c in [
       mobileController,
       emailController,
@@ -780,7 +763,38 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     super.dispose();
   }
 
-  // ────────────────────── Mobile Check ──────────────────────
+  // Hide all help texts, then show only the one we want
+  void _showOnlyThisHelp(void Function() showThis) {
+    setState(() {
+      _mobileHelpVisible = false;
+      _personNameHelpVisible = false;
+      _businessNameHelpVisible = false;
+      _cityHelpVisible = false;
+      _pincodeHelpVisible = false;
+      _addressHelpVisible = false;
+      _professionHelpVisible = false;
+      _emailHelpVisible = false;
+      _landlineCodeHelpVisible = false;
+      _landlineHelpVisible = false;
+
+      showThis(); // Now show only this one
+    });
+  }
+
+  // Clear mode-specific fields when switching Person/Business
+  void _clearModeSpecificFields() {
+    if (_isPersonSelected) {
+      businessNameController.clear();
+    } else {
+      personNameController.clear();
+      professionController.clear();
+      personPrefix = "Mr.";
+      keywordsController.clear();
+    }
+    _showOnlyThisHelp(() {}); // Hide all help
+  }
+
+  // Mobile duplicate check
   void _onMobileChanged(String value) {
     _debounce?.cancel();
     setState(() {
@@ -789,8 +803,7 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     });
 
     final trimmed = value.trim();
-    final isPatternOk = RegExp(r'^[6-9]\d{9}$').hasMatch(trimmed);
-    if (!isPatternOk) return;
+    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(trimmed)) return;
 
     _debounce = Timer(const Duration(milliseconds: 600), () {
       _checkMobileExists(trimmed);
@@ -798,10 +811,10 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
   }
 
   Future<void> _checkMobileExists(String mobile) async {
-    final checkToken = mobile;
+    final token = mobile;
     setState(() {
       _isCheckingMobile = true;
-      _lastCheckToken = checkToken;
+      _lastCheckToken = token;
     });
 
     try {
@@ -811,7 +824,7 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
           .eq('mobile_number', mobile)
           .maybeSingle();
 
-      if (!mounted || _lastCheckToken != checkToken) return;
+      if (!mounted || _lastCheckToken != token) return;
 
       if (res != null) {
         final business = (res['business_name'] as String?)?.trim();
@@ -834,395 +847,19 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
         _mobileMsg = "Check failed";
       });
     } finally {
-      if (mounted && _lastCheckToken == checkToken) {
+      if (mounted && _lastCheckToken == token) {
         setState(() => _isCheckingMobile = false);
       }
     }
   }
 
-  // ────────────────────── Image Picker ──────────────────────
-  Future<void> _pickImages() async {
-    final picked = await _picker.pickMultiImage(imageQuality: 75);
-    if (picked.isNotEmpty) {
-      setState(() {
-        _selectedImages.addAll(picked.map((x) => File(x.path)));
-      });
-    }
-  }
-
-  void _removeImage(int index) {
-    setState(() => _selectedImages.removeAt(index));
-  }
-
-  // ────────────────────── OCR (Business Only) ──────────────────────
-  Future<void> _pickOcrImage(ImageSource source) async {
-    if (!_isPersonSelected) {
-      final picked = await _picker.pickImage(source: source, imageQuality: 85);
-      if (picked == null) return;
-      final file = File(picked.path);
-      setState(() {
-        _ocrImageFile = file;
-        _ocrRunning = true;
-      });
-      await _runOcrAndFill(file);
-      setState(() => _ocrRunning = false);
-    }
-  }
-
-  Future<void> _runOcrAndFill(File image) async {
-    try {
-      final inputImage = InputImage.fromFile(image);
-      final recognized = await _textRecognizer.processImage(inputImage);
-      final rawText = recognized.text;
-
-      if (rawText.trim().isEmpty) {
-        _showAlert('OCR', 'No text detected in the image.');
-        return;
-      }
-
-      final extracted = _extractFields(rawText);
-
-      if (mobileController.text.isEmpty)
-        mobileController.text = extracted.mobile ?? '';
-      if (emailController.text.isEmpty)
-        emailController.text = extracted.email ?? '';
-      if (businessNameController.text.isEmpty)
-        businessNameController.text = extracted.business ?? '';
-      if (addressController.text.isEmpty)
-        addressController.text = extracted.address ?? '';
-      if (cityController.text.isEmpty)
-        cityController.text = extracted.city ?? '';
-      if (pincodeController.text.isEmpty)
-        pincodeController.text = extracted.pincode ?? '';
-      if (personNameController.text.isEmpty)
-        personNameController.text = extracted.owner ?? '';
-      if (professionController.text.isEmpty)
-        professionController.text = extracted.products ?? '';
-
-      _showOcrResult(rawText, extracted);
-    } catch (e) {
-      _showAlert('Error', 'OCR failed: $e');
-    }
-  }
-
-  // ────────────────────── SMART OCR EXTRACTION (HIGH ACCURACY) ──────────────────────
-  ({
-    String? mobile,
-    String? email,
-    String? business,
-    String? owner,
-    String? products,
-    String? address,
-    String? city,
-    String? pincode,
-  })
-  _extractFields(String rawText) {
-    final lines = rawText
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
-
-    if (lines.isEmpty) {
-      return (
-        mobile: null,
-        email: null,
-        business: null,
-        owner: null,
-        products: null,
-        address: null,
-        city: null,
-        pincode: null,
-      );
-    }
-
-    final lowerText = rawText.toLowerCase();
-    String? mobile, email, business, owner, products, address, city, pincode;
-
-    // 1. MOBILE
-    final mobilePatterns = [
-      RegExp(r'\+91[\s\-]?(\d{5}[\s\-]?\d{5})'),
-      RegExp(r'91[\s\-]?(\d{5}[\s\-]?\d{5})'),
-      RegExp(r'0?(\d{5}[\s\-]?\d{5})'),
-      RegExp(r'\((\d{3,5})\)\s*\d{3,4}[\s\-]?\d{4}'),
-      RegExp(r'(\d{3,5})[\s\-]?\d{3,4}[\s\-]?\d{4}'),
-    ];
-
-    for (final pattern in mobilePatterns) {
-      final match = pattern.firstMatch(rawText);
-      if (match != null) {
-        final digits = match.group(1)!.replaceAll(RegExp(r'\D'), '');
-        if (digits.length == 10) {
-          mobile = digits;
-          break;
-        }
-      }
-    }
-
-    // 2. EMAIL
-    final emailMatch = RegExp(
-      r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b',
-    ).firstMatch(rawText);
-    if (emailMatch != null) {
-      final candidate = emailMatch.group(0)!;
-      if (!candidate.contains('..') && !candidate.endsWith('.')) {
-        email = candidate;
-      }
-    }
-
-    // 3. PINCODE + CITY
-    final pinMatch = RegExp(r'\b\d{6}\b').firstMatch(rawText);
-    if (pinMatch != null) {
-      pincode = pinMatch.group(0);
-      final pinLine = lines.firstWhere(
-        (l) => l.contains(pincode!),
-        orElse: () => '',
-      );
-      if (pinLine.isNotEmpty) {
-        final parts = pinLine
-            .split(RegExp(r'[\s,]+'))
-            .map((s) => s.trim())
-            .toList();
-        final pinIndex = parts.indexWhere((p) => p == pincode);
-        if (pinIndex > 0) {
-          final before = parts.sublist(0, pinIndex);
-          city = before.lastWhere(
-            (word) => word.length > 2 && !RegExp(r'\d').hasMatch(word),
-            orElse: () => before.isNotEmpty ? before.last : '',
-          );
-        }
-      }
-    }
-
-    // 4. OWNER NAME
-    final titlePatterns = [
-      RegExp(
-        r'\b(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Shri\.?|Smt\.?)\s+([A-Za-z\s]+)',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'\b(Proprietor|Owner|Contact Person|Partner|Director|CEO)\s*[:\-]?\s*([A-Za-z\s]+)',
-        caseSensitive: false,
-      ),
-    ];
-
-    for (final pattern in titlePatterns) {
-      final match = pattern.firstMatch(rawText);
-      if (match != null) {
-        owner = match.group(2)!.trim();
-        break;
-      }
-    }
-
-    if (owner == null) {
-      final firstLine = lines.first;
-      if (RegExp(
-        r'\b(Mr|Ms|Mrs|Dr|Shri|Smt)\b',
-        caseSensitive: false,
-      ).hasMatch(firstLine)) {
-        owner = firstLine;
-      }
-    }
-
-    // 5. BUSINESS NAME
-    final companyKeywords = [
-      'pvt',
-      'ltd',
-      'llp',
-      'inc',
-      'corp',
-      'solutions',
-      'enterprises',
-      'industries',
-      'technologies',
-      'agency',
-      'company',
-      'studio',
-      'store',
-      'shop',
-      'traders',
-      'works',
-      'infra',
-      'buildcon',
-    ];
-
-    for (int i = 0; i < lines.length && i < 3; i++) {
-      final line = lines[i].toLowerCase();
-      if (companyKeywords.any(line.contains)) {
-        business = lines[i];
-        break;
-      }
-    }
-
-    if (business == null) {
-      final topHalf = lines.take((lines.length / 2).ceil()).toList();
-      topHalf.sort((a, b) => b.length.compareTo(a.length));
-      business = topHalf.firstWhere(
-        (l) =>
-            l.length > 10 &&
-            !l.contains(mobile ?? '') &&
-            !l.contains(email ?? ''),
-        orElse: () => '',
-      );
-      if (business.isEmpty) business = null;
-    }
-
-    // 6. PRODUCTS / SERVICES
-    final productKeywords = [
-      'deal',
-      'product',
-      'service',
-      'manufactur',
-      'trader',
-      'supplier',
-      'distributor',
-      'wholesale',
-      'retail',
-      'sell',
-      'provide',
-      'offer',
-    ];
-
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      if (productKeywords.any(lower.contains)) {
-        products = line.contains(':')
-            ? line.split(':').last.trim()
-            : line.trim();
-        break;
-      }
-    }
-
-    // 7. ADDRESS
-    final excludePatterns = [
-      mobile,
-      email,
-      pincode,
-      owner,
-      products,
-      business,
-    ].whereType<String>().map((s) => s.toLowerCase()).toList();
-
-    final addressCandidates = <String>[];
-    StringBuffer current = StringBuffer();
-
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      final isExcluded = excludePatterns.any(lower.contains);
-      final isShort = line.length < 12;
-
-      if (isExcluded || isShort) {
-        if (current.isNotEmpty && current.toString().trim().length > 20) {
-          addressCandidates.add(current.toString().trim());
-        }
-        current.clear();
-      } else {
-        if (current.isNotEmpty) current.write(' ');
-        current.write(line);
-      }
-    }
-    if (current.isNotEmpty && current.toString().trim().length > 20) {
-      addressCandidates.add(current.toString().trim());
-    }
-
-    if (addressCandidates.isNotEmpty) {
-      addressCandidates.sort((a, b) => b.length.compareTo(a.length));
-      address = addressCandidates.first;
-    }
-
-    // 8. CITY FALLBACK
-    if (city == null) {
-      final indianCities = [
-        'mumbai',
-        'delhi',
-        'bangalore',
-        'bengaluru',
-        'kolkata',
-        'chennai',
-        'hyderabad',
-        'pune',
-        'ahmedabad',
-        'jaipur',
-        'surat',
-        'lucknow',
-        'nagpur',
-        'indore',
-        'bhopal',
-        'coimbatore',
-        'vadodara',
-        'rajkot',
-      ];
-      final found = indianCities.firstWhere(
-        lowerText.contains,
-        orElse: () => '',
-      );
-      if (found.isNotEmpty) city = found[0].toUpperCase() + found.substring(1);
-    }
-
-    return (
-      mobile: mobile,
-      email: email,
-      business: business,
-      owner: owner,
-      products: products,
-      address: address,
-      city: city,
-      pincode: pincode,
-    );
-  }
-
-  void _showOcrResult(String raw, var extracted) {
-    final buffer = StringBuffer()
-      ..writeln('=== Full OCR Text ===')
-      ..writeln(raw)
-      ..writeln('\n=== Extracted Fields ===')
-      ..writeln('Mobile   : ${extracted.mobile ?? "-"}')
-      ..writeln('Email    : ${extracted.email ?? "-"}')
-      ..writeln('Business : ${extracted.business ?? "-"}')
-      ..writeln('Owner    : ${extracted.owner ?? "-"}')
-      ..writeln('Products : ${extracted.products ?? "-"}')
-      ..writeln('Address  : ${extracted.address ?? "-"}')
-      ..writeln('City     : ${extracted.city ?? "-"}')
-      ..writeln('Pincode  : ${extracted.pincode ?? "-"}');
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('OCR Result'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(child: Text(buffer.toString())),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAlert(String title, String message) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ────────────────────── SUBMIT + NAVIGATE TO EARNINGS ──────────────────────
+  // Submit
   Future<void> addProfileRecord() async {
     if (!_formKey.currentState!.validate()) {
-      _showAlert("Missing Fields", "Please fill all required fields.");
+      _showAlert(
+        "Missing Fields",
+        "Please fill all required fields correctly.",
+      );
       return;
     }
     if (_mobileExists) {
@@ -1233,37 +870,63 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     }
 
     setState(() => isLoading = true);
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString("userId");
       final userName = prefs.getString("username");
-      if (userId == null || userName == null) {
+      if (userId == null || userName == null)
         throw Exception("User not logged in");
-      }
 
-      final profile = {
+      final Map<String, dynamic> profile = {
         "mobile_number": mobileController.text.trim(),
-        " user_type": _isPersonSelected ? "person" : "business",
-        "keywords": keywordsController.text.trim(),
-        "landline": landlineController.text.trim(),
-        "landline_code": landlineCodeController.text.trim(),
+        "user_type": _isPersonSelected ? "person" : "business",
+
+        if (personNameController.text.trim().isNotEmpty)
+          "person_name": personNameController.text.trim(),
+        if (personPrefix != null && personNameController.text.trim().isNotEmpty)
+          "person_prefix": personPrefix,
+
+        if (!_isPersonSelected)
+          "business_name": businessNameController.text.trim(),
+        if (!_isPersonSelected) "business_prefix": "M/s.",
+
+        if (_isPersonSelected && businessNameController.text.trim().isNotEmpty)
+          "business_name": businessNameController.text.trim(),
+
+        "city": cityController.text.trim(),
+        "pincode": pincodeController.text.trim(),
+        "address": addressController.text.trim(),
+        "email": emailController.text.trim().isNotEmpty
+            ? emailController.text.trim()
+            : null,
+        "keywords": keywordsController.text.trim().isNotEmpty
+            ? keywordsController.text.trim()
+            : null,
+        "landline": landlineController.text.trim().isNotEmpty
+            ? landlineController.text.trim()
+            : null,
+        "landline_code": landlineCodeController.text.trim().isNotEmpty
+            ? landlineCodeController.text.trim()
+            : null,
       };
+
+      profile.removeWhere((k, v) => v == null || (v is String && v.isEmpty));
 
       await SupabaseService.client.from("profiles").insert(profile);
 
-      // Earnings
+      // Earnings logic (unchanged)
       int earningsToAdd = 0;
       final hasBasicInfo =
-          profile["mobile_number"].toString().isNotEmpty &&
-          profile["city"].toString().isNotEmpty &&
-          profile["pincode"].toString().isNotEmpty &&
-          profile["address"].toString().isNotEmpty &&
-          ((_isPersonSelected &&
-                  profile["person_name"].toString().isNotEmpty) ||
+          cityController.text.trim().isNotEmpty &&
+          pincodeController.text.trim().isNotEmpty &&
+          addressController.text.trim().isNotEmpty &&
+          ((_isPersonSelected && personNameController.text.trim().isNotEmpty) ||
               (!_isPersonSelected &&
-                  profile["business_name"].toString().isNotEmpty));
+                  businessNameController.text.trim().isNotEmpty));
+
       if (hasBasicInfo) earningsToAdd += 1;
-      if (profile["keywords"].toString().isNotEmpty) earningsToAdd += 1;
+      if (keywordsController.text.trim().isNotEmpty) earningsToAdd += 1;
 
       final now = DateTime.now().toUtc();
       final todayStart = DateTime.utc(now.year, now.month, now.day);
@@ -1297,8 +960,8 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
         });
       }
 
-      final entryName = _isPersonSelected
-          ? personNameController.text.trim()
+      final displayName = _isPersonSelected
+          ? "${personPrefix ?? "Mr."} ${personNameController.text.trim()}"
           : businessNameController.text.trim();
 
       final inserted = await SupabaseService.client
@@ -1306,7 +969,7 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
           .insert({
             "user_id": userId,
             "username": userName,
-            "entry_name": entryName,
+            "entry_name": displayName.isNotEmpty ? displayName : "Unknown",
             "created_at": now.toIso8601String(),
             "updated_at": now.toIso8601String(),
           })
@@ -1320,7 +983,7 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
             .eq("id", inserted["id"]);
       }
 
-      // Reset form
+      // CLEAN RESET
       for (var c in [
         mobileController,
         emailController,
@@ -1336,28 +999,30 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       ]) {
         c.clear();
       }
-      setState(() {
-        personPrefix = "Mr.";
-        // business = "M/s.";
-        _selectedImages.clear();
-        _ocrImageFile = null;
-        _mobilePrefixRemoved = false;
-        _mobileHelpVisible = _emailHelpVisible = _cityHelpVisible =
-            _pincodeHelpVisible = _addressHelpVisible = _personNameHelpVisible =
-                _businessNameHelpVisible = _professionHelpVisible =
-                    _landlineCodeHelpVisible = _landlineHelpVisible = false;
-      });
+      personPrefix = "Mr.";
+      _showOnlyThisHelp(() {});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Profile saved successfully!"),
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 26),
+              SizedBox(width: 12),
+              Text(
+                "Saved successfully!",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
           backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
         ),
       );
-
-      if (mounted) {
-        Navigator.pushNamed(context, '/earning_details');
-      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
@@ -1367,7 +1032,7 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     }
   }
 
-  // ────────────────────── Validators ──────────────────────
+  // Validators
   String? validateMobile(String? v) {
     if (v == null || v.isEmpty) return "Required";
     if (v.length != 10) return "Exactly 10 digits required";
@@ -1377,14 +1042,29 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
 
   String? validatePincode(String? v) {
     if (v == null || v.isEmpty) return "Required";
-    if (!RegExp(r'^\d{6}$').hasMatch(v)) return "Must be 6 digits";
+    if (v.length != 6) return "Pincode must be exactly 6 digits";
     return null;
   }
 
   String? mandatory(String? v) =>
       (v?.trim().isEmpty ?? true) ? "Required" : null;
 
-  // ────────────────────── HELP TEXT WIDGET ──────────────────────
+  void _showAlert(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _helpText(String text, bool visible) {
     if (!visible) return const SizedBox.shrink();
     return Padding(
@@ -1400,22 +1080,24 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     );
   }
 
-  // ────────────────────── REUSABLE SMART TEXT FIELD ──────────────────────
+  // SMART TEXTFIELD — CLEAN & SIMPLE
   Widget _smartTextField({
     required TextEditingController controller,
     required String label,
     required IconData icon,
     required String helpText,
-    required bool Function() isHelpVisible,
+    required bool isHelpVisible,
     required VoidCallback onTapShowHelp,
     int maxLines = 1,
-    TextInputType? keyboard,
+    TextInputType? keyboardType,
     String? Function(String?)? validator,
     Function(String)? onChanged,
     bool isRequired = true,
-    List<TextInputFormatter>? inputFormatters,
+    int? maxLength,
   }) {
-    final showHelp = isHelpVisible() && controller.text.isEmpty;
+    final bool isNumberField =
+        keyboardType == TextInputType.phone ||
+        keyboardType == TextInputType.number;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1423,24 +1105,18 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
         TextFormField(
           controller: controller,
           maxLines: maxLines,
-          keyboardType: keyboard,
-          inputFormatters:
-              inputFormatters ??
-              (keyboard == TextInputType.phone
-                  ? [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(
-                        10,
-                      ), // ← ENFORCED 10 DIGITS
-                    ]
-                  : null),
+          keyboardType: keyboardType,
+          maxLength: maxLength,
+          inputFormatters: [
+            if (isNumberField) FilteringTextInputFormatter.digitsOnly,
+            if (maxLength != null) LengthLimitingTextInputFormatter(maxLength),
+          ],
           decoration: InputDecoration(
             labelText: label,
-            // prefixText: hasPrefix && !prefixRemoved ? prefixText : null,
-            prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
             prefixIcon: Icon(icon, size: 20),
             filled: true,
             fillColor: Colors.white,
+            counterText: "",
             contentPadding: const EdgeInsets.symmetric(
               vertical: 12,
               horizontal: 16,
@@ -1458,43 +1134,23 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
             ),
           ),
           validator: isRequired ? validator : null,
-          onChanged: (v) {
-            onChanged?.call(v);
-            if (controller.text.isNotEmpty) setState(() {});
-          },
-          onTap: () {
-            // if (hasPrefix &&
-            //     !prefixRemoved &&
-            //     controller.text.startsWith(prefixText!)) {
-            //   final raw = controller.text.substring(prefixText.length);
-            //   controller.text = raw;
-            //   controller.selection = TextSelection.fromPosition(
-            //     TextPosition(offset: raw.length),
-            //   );
-            //   onPrefixRemoved?.call(true);
-            // }
-            onTapShowHelp();
-          },
-          onEditingComplete: () => setState(() {}),
+          onChanged: onChanged,
+          onTap: onTapShowHelp, // This hides others & shows only this help
         ),
-        _helpText(helpText, showHelp),
+        _helpText(helpText, isHelpVisible && controller.text.isEmpty),
       ],
     );
   }
 
-  // ────────────────────── UI ──────────────────────
   @override
   Widget build(BuildContext context) {
-    final mobile = mobileController.text.trim();
-    final mobileValid = RegExp(r'^[6-9]\d{9}$').hasMatch(mobile);
-
     return Scaffold(
       backgroundColor: const Color(0xfff4f6fa),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
             children: [
-              // Gradient Header
+              // Header
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
@@ -1504,8 +1160,6 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     colors: [Color(0xff0072ff), Color(0xff00c6ff)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
                   ),
                   borderRadius: BorderRadius.only(
                     bottomLeft: Radius.circular(28),
@@ -1513,7 +1167,6 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
                   ),
                 ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     const Text(
                       "Media Partner Data Entry",
@@ -1537,226 +1190,55 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
               ),
               const SizedBox(height: 20),
 
-              // Form Card
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: const Color(0xfff4f6fa),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // OCR Buttons (Business only)
-                        if (!_isPersonSelected) ...[
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: _ocrRunning
-                                      ? null
-                                      : () => _pickOcrImage(ImageSource.camera),
-                                  style: ElevatedButton.styleFrom(
-                                    elevation: 3,
-                                    backgroundColor: const Color(0xffff7043),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 14,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    shadowColor: Colors.deepOrange.withOpacity(
-                                      0.3,
-                                    ),
-                                  ),
-                                  child: const Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.camera_alt_outlined,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        "Scan Card",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 15,
-                                          letterSpacing: 0.3,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: _ocrRunning
-                                      ? null
-                                      : () =>
-                                            _pickOcrImage(ImageSource.gallery),
-                                  style: ElevatedButton.styleFrom(
-                                    elevation: 3,
-                                    backgroundColor: const Color(0xff3949ab),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 14,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    shadowColor: Colors.indigo.withOpacity(0.3),
-                                  ),
-                                  child: const Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.photo_library_outlined,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        "Browse",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 15,
-                                          letterSpacing: 0.3,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Container(
-                                  height: 1,
-                                  color: Colors.grey.shade400,
-                                ),
-                                Container(
-                                  color: const Color(0xfff4f6fa),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                  ),
-                                  child: const Text(
-                                    "or",
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black54,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    children: [
+                      // Mobile
+                      _smartTextField(
+                        controller: mobileController,
+                        label: "Mobile Number *",
+                        icon: Icons.phone,
+                        helpText:
+                            "Type 10 digits with get Country code (+91), without gap. Don't Type Land Line",
+                        isHelpVisible: _mobileHelpVisible,
+                        onTapShowHelp: () =>
+                            _showOnlyThisHelp(() => _mobileHelpVisible = true),
+                        keyboardType: TextInputType.phone,
+                        validator: validateMobile,
+                        onChanged: _onMobileChanged,
+                        maxLength: 10,
+                      ),
+                      if (_mobileMsg != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6, right: 280),
+                          child: Text(
+                            _mobileMsg!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _mobileExists ? Colors.red : Colors.green,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                          if (_ocrImageFile != null)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.file(
-                                  _ocrImageFile!,
-                                  height: 150,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                        ],
-
-                        // Mobile Field
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _smartTextField(
-                            controller: mobileController,
-                            label: "Mobile Number *",
-                            icon: Icons.phone,
-                            helpText:
-                                "Enter exactly 10 digits (starts with 6-9)",
-                            isHelpVisible: () => _mobileHelpVisible,
-                            onTapShowHelp: () =>
-                                setState(() => _mobileHelpVisible = true),
-                            keyboard: TextInputType.phone,
-                            validator: validateMobile,
-                            onChanged: _onMobileChanged,
-                            // ADD THIS: Limit to exactly 10 digits
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(
-                                10,
-                              ), // ← NEW: Max 10 chars
-                            ],
-                          ),
                         ),
-                        if (_mobileMsg != null &&
-                            !(_mobileHelpVisible &&
-                                mobileController.text.isEmpty))
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6, left: 20),
-                            child: Text(
-                              _mobileMsg!,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: _mobileExists
-                                    ? Colors.red
-                                    : Colors.green,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 20),
+                      const SizedBox(height: 20),
 
-                        // Conditional Fields
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Column(
-                            children: _isPersonSelected
-                                ? _personFields()
-                                : _businessFields(),
-                          ),
-                        ),
+                      // Conditional Fields
+                      Column(
+                        children: _isPersonSelected
+                            ? _personFields()
+                            : _businessFields(),
+                      ),
 
-                        const SizedBox(height: 20),
-
-                        // Images
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _buildImageSection(),
-                        ),
-
-                        const SizedBox(height: 28),
-
-                        // Submit
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _buildSubmitButton(),
-                        ),
-                      ],
-                    ),
+                      const SizedBox(height: 28),
+                      _buildSubmitButton(),
+                      const SizedBox(height: 30),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 30),
             ],
           ),
         ),
@@ -1764,36 +1246,39 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     );
   }
 
-  // UI Widgets
   Widget _buildModeButton(String title, bool isPerson) {
-    final isActive = _isPersonSelected == isPerson;
+    final active = _isPersonSelected == isPerson;
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _isPersonSelected = isPerson),
+        onTap: () {
+          if (_isPersonSelected != isPerson) {
+            setState(() => _isPersonSelected = isPerson);
+            _clearModeSpecificFields();
+          }
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: isActive ? Colors.white : Colors.transparent,
+            color: active ? Colors.white : Colors.transparent,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: Colors.white),
-            boxShadow: isActive
+            boxShadow: active
                 ? [
                     BoxShadow(
                       color: Colors.white.withOpacity(0.4),
                       blurRadius: 6,
-                      offset: const Offset(0, 3),
+                      offset: Offset(0, 3),
                     ),
                   ]
                 : [],
           ),
-          child: Center(
-            child: Text(
-              title,
-              style: TextStyle(
-                color: isActive ? const Color(0xff0072ff) : Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 16,
-              ),
+          child: Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: active ? const Color(0xff0072ff) : Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
             ),
           ),
         ),
@@ -1806,9 +1291,10 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: personNameController,
       label: "Person Name *",
       icon: Icons.person,
-      helpText: "Enter full name (e.g. John Doe)",
-      isHelpVisible: () => _personNameHelpVisible,
-      onTapShowHelp: () => setState(() => _personNameHelpVisible = true),
+      helpText: "Type Initial at the end",
+      isHelpVisible: _personNameHelpVisible,
+      onTapShowHelp: () =>
+          _showOnlyThisHelp(() => _personNameHelpVisible = true),
       validator: mandatory,
     ),
     const SizedBox(height: 12),
@@ -1819,22 +1305,12 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
     ),
     const SizedBox(height: 12),
     _smartTextField(
-      controller: businessNameController,
-      label: "Firm Name",
-      icon: Icons.business,
-      helpText: "Optional: Enter company name if any",
-      isHelpVisible: () => _businessNameHelpVisible,
-      onTapShowHelp: () => setState(() => _businessNameHelpVisible = true),
-      isRequired: false,
-    ),
-    const SizedBox(height: 12),
-    _smartTextField(
       controller: cityController,
       label: "City *",
       icon: Icons.location_city,
-      helpText: "Enter city name (e.g. Mumbai)",
-      isHelpVisible: () => _cityHelpVisible,
-      onTapShowHelp: () => setState(() => _cityHelpVisible = true),
+      helpText: "Type City Name. Don't Use Petnames (Kovai Etc.)",
+      isHelpVisible: _cityHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _cityHelpVisible = true),
       validator: mandatory,
     ),
     const SizedBox(height: 12),
@@ -1842,20 +1318,22 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: pincodeController,
       label: "Pincode *",
       icon: Icons.pin,
-      helpText: "Enter 6-digit pincode",
-      isHelpVisible: () => _pincodeHelpVisible,
-      onTapShowHelp: () => setState(() => _pincodeHelpVisible = true),
+      helpText: "Type 6 Digits Continuously Without Gap",
+      isHelpVisible: _pincodeHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _pincodeHelpVisible = true),
       validator: validatePincode,
-      keyboard: TextInputType.number,
+      keyboardType: TextInputType.number,
+      maxLength: 6,
     ),
     const SizedBox(height: 12),
     _smartTextField(
       controller: addressController,
       label: "Address *",
       icon: Icons.home,
-      helpText: "Enter complete address with landmarks",
-      isHelpVisible: () => _addressHelpVisible,
-      onTapShowHelp: () => setState(() => _addressHelpVisible = true),
+      helpText:
+          "Type Door Number, Street, Flat No, Apartment Name, Landmark, Area Name etc.",
+      isHelpVisible: _addressHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _addressHelpVisible = true),
       maxLines: 2,
       validator: mandatory,
     ),
@@ -1864,9 +1342,10 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: professionController,
       label: "Profession",
       icon: Icons.work,
-      helpText: "Enter your job or business type",
-      isHelpVisible: () => _professionHelpVisible,
-      onTapShowHelp: () => setState(() => _professionHelpVisible = true),
+      helpText: "Job / business type",
+      isHelpVisible: _professionHelpVisible,
+      onTapShowHelp: () =>
+          _showOnlyThisHelp(() => _professionHelpVisible = true),
       onChanged: (v) => keywordsController.text = v,
       isRequired: false,
     ),
@@ -1875,9 +1354,9 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: emailController,
       label: "Email",
       icon: Icons.email,
-      helpText: "Enter valid email (e.g. name@domain.com)",
-      isHelpVisible: () => _emailHelpVisible,
-      onTapShowHelp: () => setState(() => _emailHelpVisible = true),
+      helpText: "type Correctly if only Available",
+      isHelpVisible: _emailHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _emailHelpVisible = true),
       isRequired: false,
     ),
     const SizedBox(height: 12),
@@ -1888,11 +1367,13 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
             controller: landlineCodeController,
             label: "STD Code",
             icon: Icons.dialpad,
-            helpText: "Enter area code (e.g. 022)",
-            isHelpVisible: () => _landlineCodeHelpVisible,
+            helpText:
+                "Type Only Landline, if Available. Don't Type Mobile Number here.",
+            isHelpVisible: _landlineCodeHelpVisible,
             onTapShowHelp: () =>
-                setState(() => _landlineCodeHelpVisible = true),
-            keyboard: TextInputType.number,
+                _showOnlyThisHelp(() => _landlineCodeHelpVisible = true),
+            keyboardType: TextInputType.number,
+            maxLength: 5,
             isRequired: false,
           ),
         ),
@@ -1903,9 +1384,13 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
             controller: landlineController,
             label: "Landline",
             icon: Icons.phone,
-            helpText: "Enter landline number",
-            isHelpVisible: () => _landlineHelpVisible,
-            onTapShowHelp: () => setState(() => _landlineHelpVisible = true),
+            helpText:
+                "Type Only Landline, if Available. Don't Type Mobile Number here.",
+            isHelpVisible: _landlineHelpVisible,
+            onTapShowHelp: () =>
+                _showOnlyThisHelp(() => _landlineHelpVisible = true),
+            keyboardType: TextInputType.number,
+            maxLength: 10,
             isRequired: false,
           ),
         ),
@@ -1918,9 +1403,10 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: businessNameController,
       label: "Business Name *",
       icon: Icons.store,
-      helpText: "Enter full business name",
-      isHelpVisible: () => _businessNameHelpVisible,
-      onTapShowHelp: () => setState(() => _businessNameHelpVisible = true),
+      helpText: "Enter Your Full business name",
+      isHelpVisible: _businessNameHelpVisible,
+      onTapShowHelp: () =>
+          _showOnlyThisHelp(() => _businessNameHelpVisible = true),
       validator: mandatory,
     ),
     const SizedBox(height: 12),
@@ -1928,9 +1414,10 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: personNameController,
       label: "Contact Person",
       icon: Icons.person_outline,
-      helpText: "Enter contact person's name",
-      isHelpVisible: () => _personNameHelpVisible,
-      onTapShowHelp: () => setState(() => _personNameHelpVisible = true),
+      helpText: "Optional",
+      isHelpVisible: _personNameHelpVisible,
+      onTapShowHelp: () =>
+          _showOnlyThisHelp(() => _personNameHelpVisible = true),
       isRequired: false,
     ),
     const SizedBox(height: 12),
@@ -1944,9 +1431,9 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: cityController,
       label: "City *",
       icon: Icons.location_city,
-      helpText: "Enter city name (e.g. Mumbai)",
-      isHelpVisible: () => _cityHelpVisible,
-      onTapShowHelp: () => setState(() => _cityHelpVisible = true),
+      helpText: "Type City Name. Don't Use Petnames (Kovai Etc.)",
+      isHelpVisible: _cityHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _cityHelpVisible = true),
       validator: mandatory,
     ),
     const SizedBox(height: 12),
@@ -1954,20 +1441,22 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: pincodeController,
       label: "Pincode *",
       icon: Icons.pin,
-      helpText: "Enter 6-digit pincode",
-      isHelpVisible: () => _pincodeHelpVisible,
-      onTapShowHelp: () => setState(() => _pincodeHelpVisible = true),
+      helpText: "Type 6 Digits Continuously Without Gap",
+      isHelpVisible: _pincodeHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _pincodeHelpVisible = true),
       validator: validatePincode,
-      keyboard: TextInputType.number,
+      keyboardType: TextInputType.number,
+      maxLength: 6,
     ),
     const SizedBox(height: 12),
     _smartTextField(
       controller: addressController,
       label: "Address *",
       icon: Icons.home,
-      helpText: "Enter complete business address",
-      isHelpVisible: () => _addressHelpVisible,
-      onTapShowHelp: () => setState(() => _addressHelpVisible = true),
+      helpText:
+          "Type Door Number, Street, Flat No, Apartment Name, Landmark, Area Name etc.",
+      isHelpVisible: _addressHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _addressHelpVisible = true),
       maxLines: 2,
       validator: mandatory,
     ),
@@ -1976,9 +1465,10 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: professionController,
       label: "Products/Services",
       icon: Icons.category,
-      helpText: "List main products or services",
-      isHelpVisible: () => _professionHelpVisible,
-      onTapShowHelp: () => setState(() => _professionHelpVisible = true),
+      helpText: "Enter your Products (Use Comma)",
+      isHelpVisible: _professionHelpVisible,
+      onTapShowHelp: () =>
+          _showOnlyThisHelp(() => _professionHelpVisible = true),
       onChanged: (v) => keywordsController.text = v,
       isRequired: false,
     ),
@@ -1987,9 +1477,9 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
       controller: emailController,
       label: "Email",
       icon: Icons.email,
-      helpText: "Enter business email",
-      isHelpVisible: () => _emailHelpVisible,
-      onTapShowHelp: () => setState(() => _emailHelpVisible = true),
+      helpText: "Type Correctly, Only If Available",
+      isHelpVisible: _emailHelpVisible,
+      onTapShowHelp: () => _showOnlyThisHelp(() => _emailHelpVisible = true),
       isRequired: false,
     ),
     const SizedBox(height: 12),
@@ -2000,11 +1490,13 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
             controller: landlineCodeController,
             label: "STD Code",
             icon: Icons.dialpad,
-            helpText: "Enter STD code (e.g. 022)",
-            isHelpVisible: () => _landlineCodeHelpVisible,
+            helpText:
+                "Type Only Landline, if Available. Don't Type Mobile Number here.",
+            isHelpVisible: _landlineCodeHelpVisible,
             onTapShowHelp: () =>
-                setState(() => _landlineCodeHelpVisible = true),
-            keyboard: TextInputType.number,
+                _showOnlyThisHelp(() => _landlineCodeHelpVisible = true),
+            keyboardType: TextInputType.number,
+            maxLength: 5,
             isRequired: false,
           ),
         ),
@@ -2015,9 +1507,13 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
             controller: landlineController,
             label: "Landline",
             icon: Icons.phone,
-            helpText: "Enter landline number",
-            isHelpVisible: () => _landlineHelpVisible,
-            onTapShowHelp: () => setState(() => _landlineHelpVisible = true),
+            helpText:
+                "Type Only Landline, if Available. Don't Type Mobile Number here.",
+            isHelpVisible: _landlineHelpVisible,
+            onTapShowHelp: () =>
+                _showOnlyThisHelp(() => _landlineHelpVisible = true),
+            keyboardType: TextInputType.number,
+            maxLength: 10,
             isRequired: false,
           ),
         ),
@@ -2037,66 +1533,6 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
         const Text("Mr."),
         Radio<String>(value: "Ms.", groupValue: value, onChanged: onChanged),
         const Text("Ms."),
-      ],
-    );
-  }
-
-  Widget _buildImageSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Upload Photos (Optional)",
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 12),
-        if (_selectedImages.isEmpty)
-          OutlinedButton.icon(
-            onPressed: _pickImages,
-            icon: const Icon(Icons.add_a_photo),
-            label: const Text("Add Images"),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.blueAccent),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          )
-        else
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: _selectedImages.asMap().entries.map((e) {
-              return Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.file(
-                      e.value,
-                      width: 100,
-                      height: 100,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: IconButton(
-                      icon: const Icon(
-                        Icons.close,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                      onPressed: () => _removeImage(e.key),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.black54,
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }).toList(),
-          ),
       ],
     );
   }
@@ -2121,7 +1557,7 @@ class _MediaPartnerSignupPageState extends State<MediaPartnerSignupPage> {
                 _isPersonSelected
                     ? "Save Person Profile"
                     : "Save Business Profile",
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
