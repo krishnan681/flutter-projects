@@ -1148,8 +1148,6 @@
 //
 //   /// new
 
-// search_page.dart - FINAL VERSION → PRIORITY WINS EVERYTHING (No A-Z!)
-// search_page.dart
 import 'package:celfonephonebookapp/screens/modelpage.dart';
 import 'package:celfonephonebookapp/screens/signin.dart';
 import 'package:celfonephonebookapp/supabase/supabase.dart';
@@ -1160,14 +1158,19 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:animations/animations.dart';
 
 class SearchPage extends StatefulWidget {
-  final String? initialFilter; // Can be: keyword/category OR single letter A-Z
+  final String? initialFilter;
   final List<dynamic>? filteredCompanies;
+  final bool forceGeneralSearch;
+  final String? subcategoryContext;
 
   const SearchPage({
     super.key,
     this.initialFilter,
     this.filteredCompanies,
+    this.forceGeneralSearch = false,
+    this.subcategoryContext,
     required String category,
+    required String selectedLetter,
   });
 
   @override
@@ -1182,8 +1185,6 @@ class _SearchPageState extends State<SearchPage> {
   bool isKeywordsFocused = false;
   bool isLoading = false;
   List<dynamic> searchResults = [];
-
-  // Removed _currentLetterFilter — no longer needed
 
   @override
   void initState() {
@@ -1204,18 +1205,26 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
-    // Detect single uppercase letter → A-Z browsing mode (keep search boxes clean)
     if (filter.length == 1 && RegExp(r'^[A-Z]$').hasMatch(filter)) {
       _firmPersonController.clear();
       _keywordsController.clear();
       _performSearch(filter, searchType: "letter");
+      return;
     }
-    // Otherwise → normal keyword/category search
-    else {
-      _keywordsController.text = filter;
-      isKeywordsFocused = true;
+
+    if (widget.forceGeneralSearch) {
+      _firmPersonController.text = filter;
+      _keywordsController.clear();
+      isFirmPersonFocused = true;
+      isKeywordsFocused = false;
       _performCategorySearch(filter);
+      return;
     }
+
+    _keywordsController.text = filter;
+    isKeywordsFocused = true;
+    isFirmPersonFocused = false;
+    _performCategorySearch(filter);
   }
 
   void _sortResults() {
@@ -1327,18 +1336,64 @@ class _SearchPageState extends State<SearchPage> {
   Future<void> _performCategorySearch(String category) async {
     setState(() => isLoading = true);
     try {
-      final parts = category
-          .split(' ')
-          .map(
-            (t) =>
-                'business_name.ilike.%$t%,person_name.ilike.%$t%,keywords.ilike.%$t%',
-          )
-          .join(',');
-      final results = await SupabaseService.client
-          .from('profiles')
-          .select()
-          .or(parts)
-          .order('is_prime', ascending: false);
+      final query = category.trim();
+      if (query.isEmpty) {
+        await _fetchAllCompanies();
+        return;
+      }
+
+      var request = SupabaseService.client.from('profiles').select();
+
+      if (widget.subcategoryContext != null) {
+        final context = widget.subcategoryContext!.toLowerCase();
+        String boostConditions = '';
+
+        if (context == 'college') {
+          boostConditions =
+              'keywords.ilike.%college%,keywords.ilike.%institute%,keywords.ilike.%university%,keywords.ilike.%school%,business_name.ilike.%college%,business_name.ilike.%institute%';
+        } else if (context == 'doctor') {
+          boostConditions =
+              'keywords.ilike.%doctor%,keywords.ilike.%clinic%,keywords.ilike.%hospital%,keywords.ilike.%physician%,business_name.ilike.%dr.%,business_name.ilike.%clinic%';
+        } else if (context == 'hospital') {
+          boostConditions =
+              'keywords.ilike.%hospital%,keywords.ilike.%clinic%,keywords.ilike.%medical centre%,business_name.ilike.%hospital%';
+        } else if (context == 'hotel') {
+          boostConditions =
+              'keywords.ilike.%hotel%,keywords.ilike.%resort%,keywords.ilike.%lodge%,business_name.ilike.%hotel%,business_name.ilike.%resort%';
+        } else if (context == 'travel') {
+          boostConditions =
+              'keywords.ilike.%travel%,keywords.ilike.%tours%,keywords.ilike.%cab%,keywords.ilike.%bus%,keywords.ilike.%visa%';
+        } else if (context == 'shop') {
+          boostConditions =
+              'keywords.ilike.%shop%,keywords.ilike.%store%,keywords.ilike.%mart%,keywords.ilike.%super market%';
+        } else if (context == 'parlour') {
+          boostConditions =
+              'keywords.ilike.%parlour%,keywords.ilike.%salon%,keywords.ilike.%spa%,keywords.ilike.%beauty%';
+        }
+
+        if (boostConditions.isNotEmpty) {
+          request = request.or(boostConditions);
+        }
+      }
+
+      request = request.or(
+        'business_name.ilike.%$query%,person_name.ilike.%$query%,keywords.ilike.%$query%',
+      );
+
+      final words = query.split(' ').where((w) => w.length >= 2).toList();
+      if (words.isNotEmpty) {
+        final wordConditions = words
+            .map(
+              (w) =>
+                  'business_name.ilike.%$w%,person_name.ilike.%$w%,keywords.ilike.%$w%',
+            )
+            .join(',');
+        request = request.or(wordConditions);
+      }
+
+      final results = await request
+          .order('is_prime', ascending: false)
+          .order('priority', ascending: false);
 
       setState(() {
         searchResults = results;
@@ -1346,6 +1401,7 @@ class _SearchPageState extends State<SearchPage> {
       });
     } catch (e) {
       debugPrint("Category search error: $e");
+      await _fetchAllCompanies();
     } finally {
       setState(() => isLoading = false);
     }
@@ -1428,7 +1484,16 @@ class _SearchPageState extends State<SearchPage> {
     return "No products";
   }
 
-  Widget _goldTierCard(Map<String, dynamic> item, String name) {
+  // Helper: Truncate name to first 1-2 words + "..."
+  String _trimName(String fullName) {
+    if (fullName.isEmpty) return "User";
+    final words = fullName.trim().split(' ');
+    if (words.length <= 2) return fullName;
+    return '${words[0]} ${words.length > 1 ? words[1] : ''}...'.trim();
+  }
+
+  Widget _goldTierCard(Map<String, dynamic> item, String fullName) {
+    final truncatedName = _trimName(fullName);
     final goldGradient = const LinearGradient(
       colors: [Color(0xFFb87333), Color(0xFFFFD700)],
     );
@@ -1470,14 +1535,14 @@ class _SearchPageState extends State<SearchPage> {
                           child: Row(
                             children: [
                               Text(
-                                name,
+                                truncatedName,
                                 style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w700,
                                   color: Colors.black,
                                 ),
                               ),
-                              const SizedBox(width: 4),
+                              const SizedBox(width: 6),
                               const Icon(
                                 Icons.workspace_premium,
                                 color: Colors.amber,
@@ -1489,7 +1554,21 @@ class _SearchPageState extends State<SearchPage> {
                                 color: Colors.green,
                                 size: 18,
                               ),
+                              const Spacer(),
                             ],
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => _checkLoginAndProceed(
+                            () => launchUrl(Uri.parse("tel:$mobile")),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.only(right: 12),
+                            child: Icon(
+                              Icons.call,
+                              color: Colors.green,
+                              size: 28,
+                            ),
                           ),
                         ),
                         InkWell(
@@ -1503,7 +1582,7 @@ class _SearchPageState extends State<SearchPage> {
                                 ),
                               ),
                               builder: (_) => FavoriteOptionsModal(
-                                name: name,
+                                name: fullName,
                                 mobile: mobile,
                               ),
                             );
@@ -1558,48 +1637,30 @@ class _SearchPageState extends State<SearchPage> {
                   ],
                 ),
                 Positioned(
-                  top: 45,
+                  bottom: 0,
                   right: 0,
-                  child: Row(
-                    children: [
-                      GestureDetector(
-                        onTap: () => _checkLoginAndProceed(
-                          () => launchUrl(Uri.parse("tel:$mobile")),
-                        ),
-                        child: Container(
-                          height: 40,
-                          width: 60,
-                          child: const Icon(
-                            Icons.call,
-                            color: Colors.green,
-                            size: 24,
+                  child: GestureDetector(
+                    onTap: () => _checkLoginAndProceed(
+                      () => showEnquiryPopup(context, fullName, mobile),
+                    ),
+                    child: Container(
+                      width: 100,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        gradient: goldGradient,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          "Enquire",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
                           ),
                         ),
                       ),
-                      GestureDetector(
-                        onTap: () => _checkLoginAndProceed(
-                          () => showEnquiryPopup(context, name, mobile),
-                        ),
-                        child: Container(
-                          height: 40,
-                          width: 80,
-                          decoration: BoxDecoration(
-                            gradient: goldGradient,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Center(
-                            child: Text(
-                              "Enquire",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ],
@@ -1634,8 +1695,6 @@ class _SearchPageState extends State<SearchPage> {
       body: Column(
         children: [
           const SizedBox(height: 10),
-
-          // Search Fields
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
@@ -1726,9 +1785,7 @@ class _SearchPageState extends State<SearchPage> {
               ],
             ),
           ),
-
           const SizedBox(height: 20),
-
           Expanded(
             child: isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -1752,7 +1809,7 @@ class _SearchPageState extends State<SearchPage> {
                           .toLowerCase();
                       final bool isGold =
                           item['is_prime'] == true || sub == 'gold';
-                      final String name =
+                      final String fullName =
                           item['business_name']?.toString().isNotEmpty == true
                           ? item['business_name']
                           : item['person_name'] ?? "User";
@@ -1771,7 +1828,7 @@ class _SearchPageState extends State<SearchPage> {
                       if (isGold) {
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: _goldTierCard(item, name),
+                          child: _goldTierCard(item, fullName),
                         );
                       }
 
@@ -1784,7 +1841,7 @@ class _SearchPageState extends State<SearchPage> {
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         child: TieredBusinessCard(
-                          name: name,
+                          fullName: fullName,
                           displayText: displayText,
                           displayIcon: isKeywordsFocused
                               ? Icons.inventory_2
@@ -1804,7 +1861,7 @@ class _SearchPageState extends State<SearchPage> {
                             () => launchUrl(Uri.parse("tel:$mobile")),
                           ),
                           onEnquiry: () => _checkLoginAndProceed(
-                            () => showEnquiryPopup(context, name, mobile),
+                            () => showEnquiryPopup(context, fullName, mobile),
                           ),
                           onFavorite: () => _checkLoginAndProceed(
                             () => showModalBottomSheet(
@@ -1816,7 +1873,7 @@ class _SearchPageState extends State<SearchPage> {
                                 ),
                               ),
                               builder: (_) => FavoriteOptionsModal(
-                                name: name,
+                                name: fullName,
                                 mobile: mobile,
                               ),
                             ),
@@ -1832,16 +1889,16 @@ class _SearchPageState extends State<SearchPage> {
   }
 }
 
-// BEAUTIFUL CARD FOR Business + Normal Business + Free
 class TieredBusinessCard extends StatelessWidget {
-  final String name, displayText, mobile, tier;
+  final String fullName;
+  final String displayText, mobile, tier;
   final IconData displayIcon;
   final bool priority;
   final VoidCallback onTap, onCall, onEnquiry, onFavorite;
 
   const TieredBusinessCard({
     super.key,
-    required this.name,
+    required this.fullName,
     required this.displayText,
     required this.displayIcon,
     required this.mobile,
@@ -1853,32 +1910,27 @@ class TieredBusinessCard extends StatelessWidget {
     required this.onFavorite,
   });
 
+  String _trimName(String name) {
+    final words = name.trim().split(' ');
+    if (words.length <= 2) return name;
+    return '${words[0]} ${words.length > 1 ? words[1] : ''}...'.trim();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final truncatedName = _trimName(fullName);
+
     Color primaryColor;
-    Color lightBg;
-    Color borderColor;
     Color buttonColor;
 
     if (tier == 'business') {
-      primaryColor = const Color(0xFFE91E63); // Pink
-      lightBg = const Color.fromARGB(255, 255, 255, 255);
-      borderColor = primaryColor;
+      primaryColor = const Color(0xFFE91E63);
       buttonColor = primaryColor;
     } else if (tier == 'normal_business') {
-      // primaryColor = const Color(0xFF6366F1);
       primaryColor = const Color(0xFF8B5CF6);
-      // Want Purple? → Color(0xFF8B5CF6)
-      // Want Green?  → Color(0xFF10B981)
-      // Want Orange? → Color(0xFFF59E0B)
-      lightBg = const Color.fromARGB(255, 255, 255, 255);
-      borderColor = primaryColor;
       buttonColor = primaryColor;
     } else {
-      // Free
       primaryColor = Colors.grey.shade700;
-      lightBg = const Color.fromARGB(255, 255, 255, 255);
-      borderColor = Colors.grey.shade400;
       buttonColor = Colors.grey.shade700;
     }
 
@@ -1888,9 +1940,9 @@ class TieredBusinessCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: lightBg,
+          color: Colors.white,
           border: Border.all(
-            color: borderColor,
+            color: tier == 'free' ? Colors.grey.shade400 : primaryColor,
             width: tier == 'free' ? 1.5 : 4.0,
           ),
           borderRadius: BorderRadius.circular(16),
@@ -1910,42 +1962,58 @@ class TieredBusinessCard extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 17.5,
-                          fontWeight: tier == 'free'
-                              ? FontWeight.w600
-                              : FontWeight.w800,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                    if (tier != 'free')
-                      const Icon(Icons.verified, color: Colors.green, size: 20),
-                    if (priority)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade700,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text(
-                            "Featured",
+                      child: Row(
+                        children: [
+                          Text(
+                            truncatedName,
                             style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 17.5,
+                              fontWeight: tier == 'free'
+                                  ? FontWeight.w600
+                                  : FontWeight.w800,
+                              color: Colors.black87,
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 6),
+                          if (tier != 'free')
+                            const Icon(
+                              Icons.verified,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                          if (priority)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade700,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  "Featured",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          const Spacer(),
+                        ],
                       ),
-                    const SizedBox(width: 10),
+                    ),
+                    GestureDetector(
+                      onTap: onCall,
+                      child: const Padding(
+                        padding: EdgeInsets.only(right: 12),
+                        child: Icon(Icons.call, color: Colors.green, size: 28),
+                      ),
+                    ),
                     InkWell(
                       onTap: onFavorite,
                       child: Icon(
@@ -1987,49 +2055,31 @@ class TieredBusinessCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                // const SizedBox(height: 12),
               ],
             ),
             Positioned(
               bottom: 0,
               right: 0,
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: onCall,
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-
-                      child: const Icon(
-                        Icons.call,
-                        color: Colors.green,
-                        size: 22,
+              child: GestureDetector(
+                onTap: onEnquiry,
+                child: Container(
+                  width: 100,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: buttonColor,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      "Enquire",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
                     ),
                   ),
-                  // const SizedBox(width: 14),
-                  GestureDetector(
-                    onTap: onEnquiry,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 26,
-                        vertical: 13,
-                      ),
-                      decoration: BoxDecoration(
-                        color: buttonColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text(
-                        "Enquire",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ],
@@ -2039,7 +2089,6 @@ class TieredBusinessCard extends StatelessWidget {
   }
 }
 
-// Favorite Modal (kept exactly as you had it)
 class FavoriteOptionsModal extends StatefulWidget {
   final String name;
   final String mobile;

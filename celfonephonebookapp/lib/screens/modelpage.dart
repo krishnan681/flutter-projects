@@ -2084,75 +2084,99 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
 
     final allProducts = [..._priorityProducts, ..._secondaryProducts];
 
-    Widget actionButtons = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      child: Column(
+    Widget _actionIcon({
+      required IconData icon,
+      required Color color,
+      required VoidCallback? onTap,
+      String? label,
+    }) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _btn(
-                Icons.call,
-                Colors.green,
-                mobile.isNotEmpty ? () => _call(mobile) : null,
-              ),
-              _btn(
-                FontAwesomeIcons.whatsapp,
-                Color(0xFF25D366),
-                whatsapp.isNotEmpty ? () => _wa(whatsapp) : null,
-              ),
-              _btn(
-                FontAwesomeIcons.commentDots,
-                Colors.blue,
-                mobile.isNotEmpty ? () => _sms(mobile) : null,
-              ),
-              _btn(
-                FontAwesomeIcons.envelope,
-                Colors.orange[700]!,
-                email.isNotEmpty ? () => _mail(email) : null,
-              ),
-            ],
+          GestureDetector(
+            onTap: onTap,
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Icon(icon, color: color, size: 32),
+            ),
           ),
-          SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (website.isNotEmpty)
-                _btn(
-                  FontAwesomeIcons.globe,
-                  Colors.purple,
-                  () => _web(website),
-                ),
-              if (website.isNotEmpty && landline.isNotEmpty)
-                SizedBox(width: 40),
-              if (landline.isNotEmpty)
-                GestureDetector(
-                  onTap: () => _call(fullLandline),
-                  child: Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Color.fromARGB(255, 153, 0, 255),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 8,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        "telephone",
-                        style: TextStyle(fontSize: 32, color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
+          if (label != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.black87,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ],
+      );
+    }
+
+    Widget actionButtonsCarousel = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            if (mobile.isNotEmpty)
+              _actionIcon(
+                icon: Icons.call,
+                color: Colors.green,
+                onTap: () => _call(mobile),
+                label: "Call",
+              ),
+            const SizedBox(width: 20),
+
+            if (whatsapp.isNotEmpty)
+              _actionIcon(
+                icon: FontAwesomeIcons.whatsapp,
+                color: const Color(0xFF25D366),
+                onTap: () => _wa(whatsapp),
+                label: "WhatsApp",
+              ),
+            const SizedBox(width: 20),
+
+            if (mobile.isNotEmpty)
+              _actionIcon(
+                icon: FontAwesomeIcons.commentDots,
+                color: Colors.blue,
+                onTap: () => _sms(mobile),
+                label: "SMS",
+              ),
+            const SizedBox(width: 20),
+
+            if (email.isNotEmpty)
+              _actionIcon(
+                icon: FontAwesomeIcons.envelope,
+                color: Colors.orange,
+                onTap: () => _mail(email),
+                label: "Email",
+              ),
+            const SizedBox(width: 20),
+
+            if (website.isNotEmpty)
+              _actionIcon(
+                icon: FontAwesomeIcons.globe,
+                color: Colors.purple,
+                onTap: () => _web(website),
+                label: "Website",
+              ),
+            const SizedBox(width: 20),
+
+            if (landline.isNotEmpty)
+              _actionIcon(
+                icon: Icons.phone,
+                color: const Color(0xFF9C27B0),
+                onTap: () => _call(fullLandline),
+                label: "Landline",
+              ),
+          ],
+        ),
       ),
     );
 
@@ -2177,7 +2201,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                 onPageChanged: (i) => setState(() => _currentPage = i),
                 itemBuilder: (_, i) => Image.network(
                   _images[i],
-                  fit: BoxFit.cover,
+                  fit: BoxFit.contain,
                   width: double.infinity,
                 ),
               ),
@@ -2328,7 +2352,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                actionButtons,
+                                actionButtonsCarousel,
                                 if (personName.isNotEmpty)
                                   _info(
                                     Icons.person,
@@ -2416,7 +2440,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            actionButtons,
+                            actionButtonsCarousel,
                             if (personName.isNotEmpty)
                               _info(
                                 Icons.person,
@@ -2508,7 +2532,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
               ),
             ],
             SizedBox(height: 20),
-            actionButtons,
+            actionButtonsCarousel,
             if (personName.isNotEmpty)
               _info(
                 Icons.person,

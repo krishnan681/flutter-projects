@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // <-- added for input formatters
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../supabase/supabase.dart';
 import './homepage_shell.dart';
@@ -22,11 +22,12 @@ class _SignupPageState extends State<SignupPage> {
   final cityController = TextEditingController();
   final pincodeController = TextEditingController();
   final addressController = TextEditingController();
+  final promoCodeController = TextEditingController(); // ← Now free text
 
   // Person
   final personNameController = TextEditingController();
-  String? personPrefix = "--"; // default
-  final keywordsController = TextEditingController(); // profession/products
+  String? personPrefix = "--";
+  final keywordsController = TextEditingController();
 
   // Business
   final businessNameController = TextEditingController();
@@ -34,7 +35,7 @@ class _SignupPageState extends State<SignupPage> {
   final landlineController = TextEditingController();
   final landlineCodeController = TextEditingController();
 
-  // --- Focus & Help-text (unchanged) ---
+  // Focus & Help-text
   final Map<TextEditingController, FocusNode> _focusNodes = {};
   final Map<TextEditingController, bool> _showHelp = {};
 
@@ -60,6 +61,7 @@ class _SignupPageState extends State<SignupPage> {
     );
     _initFocus(landlineController, "Enter the landline number (numbers only).");
     _initFocus(landlineCodeController, "Enter the STD code (numbers only).");
+    _initFocus(promoCodeController, "Enter your promo code (Name).");
   }
 
   void _initFocus(TextEditingController ctrl, String help) {
@@ -90,10 +92,10 @@ class _SignupPageState extends State<SignupPage> {
     descriptionController.dispose();
     landlineController.dispose();
     landlineCodeController.dispose();
+    promoCodeController.dispose();
     super.dispose();
   }
 
-  // ===== Mobile Check (unchanged) =====
   void _onMobileChanged(String value) {
     _debounce?.cancel();
     setState(() {
@@ -133,13 +135,13 @@ class _SignupPageState extends State<SignupPage> {
       } else {
         setState(() {
           _mobileExists = false;
-          _mobileMsg = "Mobile available [Checkmark]";
+          _mobileMsg = "Mobile available";
         });
       }
     } catch (e) {
       setState(() {
         _mobileExists = false;
-        _mobileMsg = "Couldn’t verify mobile (check RLS/connection)";
+        _mobileMsg = "Couldn’t verify mobile (check connection)";
       });
     } finally {
       if (mounted && _lastCheckToken == checkToken) {
@@ -148,7 +150,7 @@ class _SignupPageState extends State<SignupPage> {
     }
   }
 
-  // ===== NEW VALIDATORS (added) =====
+  // Validators
   String? validateMobile(String? value) {
     if (value == null || value.isEmpty) return "Enter mobile number";
     if (!RegExp(r'^[6-9]\d{9}$').hasMatch(value)) {
@@ -171,20 +173,22 @@ class _SignupPageState extends State<SignupPage> {
   }
 
   String? validateLandline(String? value) {
-    if (value == null || value.isEmpty) return null; // optional
+    if (value == null || value.isEmpty) return null;
     if (!RegExp(r'^\d+$').hasMatch(value))
       return "Landline must contain numbers only";
     return null;
   }
 
   String? validateStdCode(String? value) {
-    if (value == null || value.isEmpty) return null; // optional
+    if (value == null || value.isEmpty) return null;
     if (!RegExp(r'^\d+$').hasMatch(value))
       return "STD code must contain numbers only";
     return null;
   }
 
-  // ----- Reusable field with help & formatters -----
+  // ← Promo code has NO validation anymore
+  String? validatePromoCode(String? value) => null;
+
   Widget _field({
     required TextEditingController controller,
     required String label,
@@ -206,6 +210,7 @@ class _SignupPageState extends State<SignupPage> {
       keywordsController: "Enter profession (person) or products (business).",
       landlineController: "Enter the landline number (numbers only).",
       landlineCodeController: "Enter the STD code (numbers only).",
+      promoCodeController: "Enter your promo code (Name).",
     }[controller]!;
 
     return Column(
@@ -236,7 +241,6 @@ class _SignupPageState extends State<SignupPage> {
     );
   }
 
-  // ===== Person Form =====
   Widget _buildPersonForm() => Column(
     children: [
       _field(
@@ -289,10 +293,15 @@ class _SignupPageState extends State<SignupPage> {
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         validator: validateStdCode,
       ),
+      _field(
+        controller: promoCodeController,
+        label: "Promo Code",
+        keyboardType: TextInputType.text, // ← Allows any text
+        validator: validatePromoCode, // ← Always returns null (no validation)
+      ),
     ],
   );
 
-  // ===== Business Form =====
   Widget _buildBusinessForm() => Column(
     children: [
       _field(
@@ -356,10 +365,15 @@ class _SignupPageState extends State<SignupPage> {
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         validator: validateStdCode,
       ),
+      _field(
+        controller: promoCodeController,
+        label: "Promo Code ",
+        keyboardType: TextInputType.text,
+        validator: validatePromoCode,
+      ),
     ],
   );
 
-  // ===== Signup Submit (unchanged) =====
   Future<void> _signup() async {
     if (!_formKey.currentState!.validate()) return;
     final mobile = mobileController.text.trim();
@@ -381,7 +395,9 @@ class _SignupPageState extends State<SignupPage> {
         "person_prefix": personPrefix,
         "landline": landlineController.text.trim(),
         "landline_code": landlineCodeController.text.trim(),
+        "promo_code": promoCodeController.text.trim(),
       };
+
       String displayName = "";
       if (signupType == "person") {
         profile.addAll({
@@ -402,16 +418,18 @@ class _SignupPageState extends State<SignupPage> {
             ? businessNameController.text.trim()
             : personNameController.text.trim();
       }
+
       await SupabaseService.client.from("profiles").insert(profile);
+
       if (!mounted) return;
-      // Success popup
+
       await showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          title: const Text("Registration Successful [Party Popper]"),
+          title: const Text("Registration Successful 🎉"),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -425,7 +443,7 @@ class _SignupPageState extends State<SignupPage> {
               const Text("Password: signpost"),
               const SizedBox(height: 16),
               const Text(
-                "[Pin] Note: Take Screenshot and Save/Note.",
+                "📌 Note: Take Screenshot and Save/Note.",
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -510,14 +528,13 @@ class _SignupPageState extends State<SignupPage> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    // Mobile – 10 digits only
                     _field(
                       controller: mobileController,
                       label: "Mobile Number",
                       keyboardType: TextInputType.phone,
                       inputFormatters: [
                         FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(10), // max 10
+                        LengthLimitingTextInputFormatter(10),
                       ],
                       validator: validateMobile,
                       suffixIcon: _isCheckingMobile

@@ -733,17 +733,11 @@ class _SettingsPageState extends State<SettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('userId');
 
-    if (userId != null) {
-      // ──────────────────────────────────────────────────────────────
-      // TEMPORARY: Give admin rights to EVERY signed-in user
-      // Remove or comment this block when you go live
-      // ──────────────────────────────────────────────────────────────
-      setState(() => isAdmin = true);
-      return; // ← skip the real Supabase check
-      // ──────────────────────────────────────────────────────────────
+    if (userId == null) {
+      setState(() => isAdmin = false);
+      return;
+    }
 
-      // Original code (commented out for now)
-      /*
     try {
       final response = await SupabaseService.client
           .from('profiles')
@@ -751,13 +745,10 @@ class _SettingsPageState extends State<SettingsPage> {
           .eq('id', userId)
           .single();
 
-      if (response != null && response['is_admin'] == true) {
-        setState(() => isAdmin = true);
-      }
+      setState(() => isAdmin = (response['is_admin'] == true));
     } catch (e) {
-      debugPrint("Admin check failed: $e");
-    }
-    */
+      debugPrint('Admin check error: $e');
+      setState(() => isAdmin = false);
     }
   }
 

@@ -1707,7 +1707,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import '../supabase/supabase.dart';
-import 'package:celfonephonebookapp/screens/ search_page.dart'; // ← Make sure this path is correct
+import 'package:celfonephonebookapp/screens/ search_page.dart';
+import 'package:celfonephonebookapp/screens/modelpage.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -1724,6 +1726,7 @@ class _HomePageState extends State<HomePage> {
   late final ValueNotifier<bool> _isLoadingBanners = ValueNotifier(true);
   late final ValueNotifier<bool> _isLoadingCategories = ValueNotifier(true);
   late final ValueNotifier<bool> _isLoadingFirms = ValueNotifier(true);
+  late final ValueNotifier<bool> _isLoadingDirectories = ValueNotifier(true);
 
   late final ValueNotifier<List<Map<String, dynamic>>> _banners = ValueNotifier(
     [],
@@ -1736,6 +1739,9 @@ class _HomePageState extends State<HomePage> {
   );
   late final ValueNotifier<List<Map<String, dynamic>>> _popularFirms =
       ValueNotifier([]);
+  late final ValueNotifier<List<DirectoryItem>> _directories = ValueNotifier(
+    [],
+  );
 
   @override
   void initState() {
@@ -1749,6 +1755,7 @@ class _HomePageState extends State<HomePage> {
       _loadBanners(),
       _loadCategories(),
       _loadPopularFirms(),
+      _loadDirectories(),
     ]);
   }
 
@@ -1789,6 +1796,18 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  String _trimWelcomeName(String message) {
+    final parts = message.split(' ');
+    if (parts.length <= 3) return message;
+
+    final nameWords = parts.sublist(1);
+    final truncatedName = nameWords.length > 2
+        ? '${nameWords[0]} ${nameWords[1]}..'
+        : nameWords.join(' ');
+
+    return 'Welcome $truncatedName';
+  }
+
   Future<void> _loadBanners() async {
     try {
       final response = await _supabase.from('app_banner').select();
@@ -1819,34 +1838,72 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadPopularFirms() async {
     try {
       final response = await _supabase
-          .from('profiles')
-          .select('business_name, business_prefix, profile_image, keywords')
-          .eq('user_type', 'business')
-          .or('is_prime.eq.true,priority.eq.true')
-          .order('is_prime', ascending: false)
-          .limit(12);
+          .from('featured_firms')
+          .select('''
+          profile_id,
+          display_order,
+          profiles!inner(*)    
+        ''')
+          .eq('is_active', true)
+          .order('display_order', ascending: true)
+          .limit(6);
 
-      _popularFirms.value = List<Map<String, dynamic>>.from(response);
+      final List<Map<String, dynamic>> firms = response.map((row) {
+        final profileData = row['profiles'] as Map<String, dynamic>;
+        return Map<String, dynamic>.from(profileData);
+      }).toList();
+
+      _popularFirms.value = firms;
     } catch (e) {
-      debugPrint("Popular firms error: $e");
+      debugPrint("Featured firms error: $e");
+      _popularFirms.value = [];
     } finally {
       _isLoadingFirms.value = false;
+    }
+  }
+
+  Future<void> _loadDirectories() async {
+    try {
+      final response = await _supabase
+          .from('tiles_titles')
+          .select()
+          .order('id', ascending: true);
+
+      final List<DirectoryItem> items = (response as List)
+          .map((e) => DirectoryItem.fromMap(e as Map<String, dynamic>))
+          .toList();
+
+      _directories.value = items;
+    } catch (e) {
+      debugPrint("Directories load error: $e");
+      _directories.value = [];
+    } finally {
+      _isLoadingDirectories.value = false;
     }
   }
 
   void _openSearchPage() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SearchPage(category: '')),
+      MaterialPageRoute(
+        builder: (_) => const SearchPage(category: '', selectedLetter: ''),
+      ),
     );
   }
 
-  void _goToSearch({String? category, String? letter}) {
+  void _performGeneralSearch(String query) {
+    if (query.trim().isEmpty) {
+      _openSearchPage();
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            SearchPage(initialFilter: letter ?? category, category: ''),
+        builder: (_) => SearchPage(
+          initialFilter: query.trim(),
+          category: '',
+          selectedLetter: '',
+        ),
       ),
     );
   }
@@ -1856,10 +1913,12 @@ class _HomePageState extends State<HomePage> {
     _isLoadingBanners.dispose();
     _isLoadingCategories.dispose();
     _isLoadingFirms.dispose();
+    _isLoadingDirectories.dispose();
     _banners.dispose();
     _b2cCategories.dispose();
     _b2bCategories.dispose();
     _popularFirms.dispose();
+    _directories.dispose();
     super.dispose();
   }
 
@@ -1889,7 +1948,7 @@ class _HomePageState extends State<HomePage> {
                           vertical: 16,
                         ),
                         child: Text(
-                          welcomeMessage,
+                          _trimWelcomeName(welcomeMessage),
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
@@ -1897,17 +1956,17 @@ class _HomePageState extends State<HomePage> {
                             letterSpacing: 0.5,
                           ),
                           textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const SizedBox(height: 1),
-                      _buildAZRow(),
 
                       ValueListenableBuilder(
                         valueListenable: _isLoadingBanners,
                         builder: (_, loading, __) {
                           if (loading) {
                             return const SizedBox(
-                              height: 140,
+                              height: 80,
                               child: Center(child: CircularProgressIndicator()),
                             );
                           }
@@ -1916,7 +1975,7 @@ class _HomePageState extends State<HomePage> {
                             builder: (_, banners, __) {
                               return CarouselSlider(
                                 options: CarouselOptions(
-                                  height: 140,
+                                  height: 80,
                                   autoPlay: true,
                                   viewportFraction: 0.92,
                                   enlargeCenterPage: true,
@@ -1936,30 +1995,28 @@ class _HomePageState extends State<HomePage> {
                           );
                         },
                       ),
+                      const SizedBox(height: 23),
 
-                      const SizedBox(height: 28),
+                      _buildAZRow(),
+
                       CategorySection(
                         title: "Popular Categories B2C",
                         items: _b2cCategories,
                         isLoading: _isLoadingCategories,
                         demoItems: _demoB2C,
-                        onTap: (keyword) => _goToSearch(category: keyword),
                         onMoreTap: _openSearchPage,
                       ),
-                      const SizedBox(height: 24),
+
                       _buildAdCarousel(),
-                      const SizedBox(height: 28),
 
                       CategorySection(
                         title: "Popular Categories B2B",
                         items: _b2bCategories,
                         isLoading: _isLoadingCategories,
                         demoItems: _demoB2B,
-                        onTap: (keyword) => _goToSearch(category: keyword),
                         onMoreTap: _openSearchPage,
                       ),
 
-                      const SizedBox(height: 32),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 20),
                         child: Column(
@@ -1975,23 +2032,88 @@ class _HomePageState extends State<HomePage> {
                             ValueListenableBuilder(
                               valueListenable: _isLoadingFirms,
                               builder: (_, loading, __) {
-                                if (loading)
-                                  return const Center(
-                                    child: CircularProgressIndicator(),
+                                if (loading) {
+                                  return const Padding(
+                                    padding: EdgeInsets.all(32),
+                                    child: Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
                                   );
+                                }
                                 return ValueListenableBuilder(
                                   valueListenable: _popularFirms,
-                                  builder: (_, firms, __) =>
-                                      _buildPopularFirmsGrid(firms),
+                                  builder: (_, firms, __) {
+                                    if (firms.isEmpty) {
+                                      return const Padding(
+                                        padding: EdgeInsets.all(32),
+                                        child: Text(
+                                          "No featured firms yet",
+                                          style: TextStyle(color: Colors.grey),
+                                        ),
+                                      );
+                                    }
+                                    return _buildPopularFirmsGrid(firms);
+                                  },
                                 );
                               },
                             ),
                           ],
                         ),
                       ),
+
                       const SizedBox(height: 32),
                       const DirectoriesSection(),
-                      const SizedBox(height: 80),
+
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 16.0,
+                              vertical: 8.0,
+                            ),
+                            child: Text(
+                              "Play Book",
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 32),
+
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16.0,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _buildPlayBookCard(
+                                  image: "assets/images/book1.png",
+                                  link:
+                                      "https://play.google.com/store/books/details/Lion_Dr_Er_J_Shivakumaar_Chief_Editor_COIMBATORE_N?id=nCpLDwAAQBAJ",
+                                  title: "Coimbatore Phone Book",
+                                ),
+                                _buildPlayBookCard(
+                                  image: "assets/images/book2.png",
+                                  link:
+                                      "https://play.google.com/store/books/details/Lion_Dr_Er_J_Shivakumaar_COIMBATORE_2025_26_Indust?id=sCE6EQAAQBAJ",
+                                  title: "Coimbatore 2025-26 Industry",
+                                ),
+                                _buildPlayBookCard(
+                                  image: "assets/images/book3.png",
+                                  link:
+                                      "https://play.google.com/store/books/details/Lion_Dr_Er_J_Shivakumaar_COIMBATORE_2024_Industria?id=kwgSEQAAQBAJ",
+                                  title: "Coimbatore 2024 Industrial",
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -2003,6 +2125,9 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
+  // ... (All other methods like _buildAppBar, _buildAZRow, _buildBanner, etc. remain unchanged)
+  // For brevity, they are kept exactly as in your original code.
 
   Widget _buildAppBar() {
     return Container(
@@ -2065,41 +2190,41 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildAZRow() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: SizedBox(
-        height: 76,
+        height: 52,
         child: ListView.separated(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
           scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           itemCount: 26,
-          separatorBuilder: (_, __) => const SizedBox(width: 14),
-          itemBuilder: (context, i) {
-            final letter = String.fromCharCode(65 + i);
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (context, index) {
+            final letter = String.fromCharCode(65 + index);
             return InkWell(
-              borderRadius: BorderRadius.circular(40),
-              onTap: () => _goToSearch(letter: letter),
+              onTap: () => _performGeneralSearch(letter),
+              borderRadius: BorderRadius.circular(10),
               child: Container(
+                width: 52,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey.shade300),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.deepPurple.withOpacity(0.3),
+                      color: Colors.black.withOpacity(0.08),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                child: CircleAvatar(
-                  radius: 32,
-                  backgroundColor: Colors.white,
-                  child: Text(
-                    letter,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.deepPurple,
-                    ),
+                alignment: Alignment.center,
+                child: Text(
+                  letter,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
                   ),
                 ),
               ),
@@ -2168,6 +2293,7 @@ class _HomePageState extends State<HomePage> {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(top: 16),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
         mainAxisSpacing: 26,
@@ -2176,16 +2302,8 @@ class _HomePageState extends State<HomePage> {
       ),
       itemCount: firms.length,
       itemBuilder: (context, i) {
-        final firm = firms[i];
-        final name = "${firm['business_name'] ?? 'Firm'}".trim();
-        final img = firm['profile_image']?.toString().trim();
-        final keywords = firm['keywords']?.toString() ?? '';
-
-        return PopularFirmCard(
-          name: name,
-          imageUrl: img,
-          onTap: () => _goToSearch(category: keywords),
-        );
+        final profile = firms[i];
+        return PopularFirmCard(profile: profile);
       },
     );
   }
@@ -2211,234 +2329,41 @@ class _HomePageState extends State<HomePage> {
   ];
 }
 
-// ——— ALL WIDGETS BELOW ARE UNCHANGED ———
-class CategorySection extends StatelessWidget {
+class DirectoryItem {
   final String title;
-  final ValueNotifier<List<CategoryItem>> items;
-  final ValueNotifier<bool> isLoading;
-  final List<CategoryItem> demoItems;
-  final Function(String?) onTap;
-  final VoidCallback onMoreTap;
+  final String imageUrl;
+  final String imageTitle;
+  final String keywords;
+  final IconData? fallbackIcon;
 
-  const CategorySection({
-    super.key,
+  DirectoryItem({
     required this.title,
-    required this.items,
-    required this.isLoading,
-    required this.demoItems,
-    required this.onTap,
-    required this.onMoreTap,
+    this.imageUrl = '',
+    this.imageTitle = '',
+    this.keywords = '',
+    this.fallbackIcon,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
-          ),
-
-          ValueListenableBuilder(
-            valueListenable: isLoading,
-            builder: (_, loading, __) {
-              if (loading)
-                return const Center(child: CircularProgressIndicator());
-              return ValueListenableBuilder(
-                valueListenable: items,
-                builder: (_, list, __) {
-                  final displayItems = (list.isEmpty ? demoItems : list)
-                      .take(7)
-                      .toList();
-                  displayItems.add(
-                    CategoryItem(
-                      title: "More ${title.contains('B2C') ? 'B2C' : 'B2B'}",
-                      keywords: '',
-                      isMore: true,
-                    ),
-                  );
-                  return GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 4,
-                          childAspectRatio: 0.88,
-                          mainAxisSpacing: 6,
-                          crossAxisSpacing: 6,
-                        ),
-                    itemCount: displayItems.length,
-                    itemBuilder: (_, i) {
-                      final cat = displayItems[i];
-                      return cat.isMore
-                          ? MoreCategoryTile(
-                              title: cat.title,
-                              onTap: onMoreTap,
-                              textColor: Colors.black,
-                            )
-                          : CategoryTile(
-                              item: cat,
-                              onTap: () => onTap(cat.keywords),
-                            );
-                    },
-                  );
-                },
-              );
-            },
-          ),
-        ],
-      ),
+  factory DirectoryItem.fromMap(Map<String, dynamic> map) {
+    return DirectoryItem(
+      title: map['group_title'] ?? '',
+      imageUrl: map['image'] ?? '',
+      imageTitle: map['image_title'] ?? '',
+      keywords: map['image_keywords'] ?? '',
+      fallbackIcon: _iconForTitle(map['group_title'] ?? ''),
     );
   }
-}
 
-class CategoryTile extends StatelessWidget {
-  final CategoryItem item;
-  final VoidCallback onTap;
-  const CategoryTile({super.key, required this.item, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 34,
-            backgroundColor: Colors.deepPurple.shade50,
-            backgroundImage:
-                item.image.isNotEmpty && item.image.startsWith('http')
-                ? NetworkImage(item.image)
-                : null,
-            child: item.image.isEmpty || !item.image.startsWith('http')
-                ? Icon(
-                    CategoryItem.iconFor(item.keywords),
-                    color: Colors.deepPurple,
-                    size: 30,
-                  )
-                : null,
-          ),
-
-          Text(
-            item.title,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class MoreCategoryTile extends StatelessWidget {
-  final String title;
-  final VoidCallback onTap;
-  final Color textColor;
-  const MoreCategoryTile({
-    super.key,
-    required this.title,
-    required this.onTap,
-    this.textColor = Colors.black,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 34,
-            backgroundColor: Colors
-                .deepPurple
-                .shade100, //tochangethe colorofthebackgroundrounded
-            child: Text(
-              title.replaceAll(" ", "\n"),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color.fromARGB(255, 0, 0, 0),
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                height: 1.2,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.deepPurple,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class PopularFirmCard extends StatelessWidget {
-  final String name;
-  final String? imageUrl;
-  final VoidCallback onTap;
-
-  const PopularFirmCard({
-    super.key,
-    required this.name,
-    this.imageUrl,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 10,
-              offset: Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            CircleAvatar(
-              radius: 32,
-              backgroundImage: imageUrl?.startsWith('http') == true
-                  ? NetworkImage(imageUrl!)
-                  : null,
-              child: imageUrl == null || !imageUrl!.startsWith('http')
-                  ? const Icon(Icons.business, size: 34)
-                  : null,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              name,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  static IconData _iconForTitle(String title) {
+    final lower = title.toLowerCase();
+    if (lower.contains('gem') || lower.contains('jewellery'))
+      return Icons.diamond;
+    if (lower.contains('foundry')) return Icons.factory;
+    if (lower.contains('coimbatore')) return Icons.book;
+    if (lower.contains('bangalore')) return Icons.location_city;
+    if (lower.contains('pollachi')) return Icons.menu_book;
+    if (lower.contains('kalakurichi')) return Icons.library_books;
+    return Icons.book;
   }
 }
 
@@ -2446,19 +2371,26 @@ class DirectoriesSection extends StatelessWidget {
   const DirectoriesSection({super.key});
 
   void _navigateToSearch(BuildContext context, String keyword) {
-    Navigator.push(
-      context,
+    if (keyword.trim().isEmpty) return;
+    Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SearchPage(initialFilter: keyword, category: ''),
+        builder: (_) => SearchPage(
+          initialFilter: keyword.trim(),
+          category: '',
+          selectedLetter: '',
+        ),
       ),
     );
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
+    final homeState = context.findAncestorStateOfType<_HomePageState>()!;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
+      padding: const EdgeInsets.all(12),
       color: Colors.deepPurple.shade50,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2471,47 +2403,64 @@ class DirectoriesSection extends StatelessWidget {
               color: Colors.deepPurple,
             ),
           ),
-          const SizedBox(height: 16),
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 3,
-            mainAxisSpacing: 14,
-            crossAxisSpacing: 14,
-            childAspectRatio: 1.45,
-            children: [
-              InkWell(
-                onTap: () => _navigateToSearch(context, "gem jewellery"),
-                borderRadius: BorderRadius.circular(16),
-                child: const _DirectoryCard(
-                  title: "Gem & Jewellery",
-                  icon: Icons.diamond,
-                  isClickable: true,
-                ),
-              ),
-              InkWell(
-                onTap: () => _navigateToSearch(context, "foundry"),
-                borderRadius: BorderRadius.circular(16),
-                child: const _DirectoryCard(
-                  title: "Foundry Directory",
-                  icon: Icons.factory,
-                  isClickable: true,
-                ),
-              ),
-              const _DirectoryCard(title: "Coimbatore Ebook", icon: Icons.book),
-              const _DirectoryCard(
-                title: "Bangalore Ebook",
-                icon: Icons.location_city,
-              ),
-              const _DirectoryCard(
-                title: "Pollachi Ebook",
-                icon: Icons.menu_book,
-              ),
-              const _DirectoryCard(
-                title: "Kalakurichi Ebook",
-                icon: Icons.library_books,
-              ),
-            ],
+
+          Transform.translate(
+            offset: const Offset(0, -25),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: homeState._isLoadingDirectories,
+              builder: (_, loading, __) {
+                if (loading) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+                }
+
+                return ValueListenableBuilder<List<DirectoryItem>>(
+                  valueListenable: homeState._directories,
+                  builder: (_, directories, __) {
+                    if (directories.isEmpty) {
+                      return const Text(
+                        "No directories available",
+                        style: TextStyle(color: Colors.grey),
+                      );
+                    }
+
+                    return GridView.count(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisCount: 3,
+                      mainAxisSpacing: 16,
+                      crossAxisSpacing: 14,
+                      childAspectRatio: 1.1,
+                      children: directories.map((item) {
+                        final bool isClickable = item.keywords
+                            .trim()
+                            .isNotEmpty;
+
+                        return InkWell(
+                          onTap: isClickable
+                              ? () => _navigateToSearch(context, item.keywords)
+                              : null,
+                          borderRadius: BorderRadius.circular(16),
+                          child: _DirectoryCard(
+                            title: item.title,
+                            imageUrl: item.imageUrl,
+                            imageTitle: item.imageTitle.isNotEmpty
+                                ? item.imageTitle
+                                : null,
+                            fallbackIcon: item.fallbackIcon,
+                            isClickable: isClickable,
+                          ),
+                        );
+                      }).toList(),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -2521,22 +2470,31 @@ class DirectoriesSection extends StatelessWidget {
 
 class _DirectoryCard extends StatelessWidget {
   final String title;
-  final IconData icon;
+  final String imageUrl;
+  final String? imageTitle;
+  final IconData? fallbackIcon;
   final bool isClickable;
 
   const _DirectoryCard({
     required this.title,
-    required this.icon,
+    this.imageUrl = '',
+    this.imageTitle,
+    this.fallbackIcon,
     this.isClickable = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bool hasImage =
+        imageUrl.trim().isNotEmpty &&
+        (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
+
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(),
+
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isClickable
               ? Colors.deepPurple.shade300
@@ -2556,24 +2514,523 @@ class _DirectoryCard extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            icon,
-            size: 32,
-            color: isClickable ? Colors.deepPurple : Colors.deepPurple.shade400,
-          ),
-          const SizedBox(height: 8),
+          if (hasImage)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                imageUrl,
+                height: 48,
+                width: 48,
+                fit: BoxFit.contain,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const SizedBox(
+                    height: 48,
+                    width: 48,
+                    child: Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                },
+                errorBuilder: (_, __, ___) => Icon(
+                  fallbackIcon ?? Icons.book,
+                  size: 32,
+                  color: isClickable
+                      ? Colors.deepPurple
+                      : Colors.deepPurple.shade400,
+                ),
+              ),
+            )
+          else
+            Icon(
+              fallbackIcon ?? Icons.book,
+              size: 32,
+              color: isClickable
+                  ? Colors.deepPurple
+                  : Colors.deepPurple.shade400,
+            ),
+
           Text(
             title,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 10.5,
-              height: 1.2,
+              fontSize: 10,
+              height: 1.1,
               fontWeight: isClickable ? FontWeight.bold : FontWeight.w600,
               color: isClickable ? Colors.deepPurple : Colors.black87,
             ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class PopularFirmCard extends StatelessWidget {
+  final Map<String, dynamic> profile;
+
+  const PopularFirmCard({super.key, required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final String name =
+        (profile['business_name'] as String?)?.trim().isNotEmpty == true
+        ? profile['business_name'].toString().trim()
+        : 'Business';
+
+    final String? imageUrl = profile['profile_image'] as String?;
+    final bool hasValidImage =
+        imageUrl != null &&
+        imageUrl.trim().isNotEmpty &&
+        (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => ModelPage(profile: profile)));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 8,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 34,
+              backgroundColor: Colors.grey.shade100,
+              backgroundImage: hasValidImage ? NetworkImage(imageUrl!) : null,
+              child: hasValidImage
+                  ? null
+                  : Icon(
+                      Icons.business_center,
+                      size: 36,
+                      color: Colors.grey.shade600,
+                    ),
+            ),
+
+            Text(
+              name,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Widget _buildPlayBookCard({
+  required String image,
+  required String link,
+  required String title,
+}) {
+  return Expanded(
+    child: GestureDetector(
+      onTap: () async {
+        final uri = Uri.parse(link);
+        try {
+          final launched = await launchUrl(
+            uri,
+            mode: LaunchMode.externalApplication,
+          );
+          if (!launched) debugPrint('Could not launch $link');
+        } catch (e) {
+          debugPrint('Error launching URL $link: $e');
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: Image.asset(
+                image,
+                height: 130,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class CategorySection extends StatelessWidget {
+  final String title;
+  final ValueNotifier<List<CategoryItem>> items;
+  final ValueNotifier<bool> isLoading;
+  final List<CategoryItem> demoItems;
+  final VoidCallback onMoreTap;
+
+  const CategorySection({
+    super.key,
+    required this.title,
+    required this.items,
+    required this.isLoading,
+    required this.demoItems,
+    required this.onMoreTap,
+  });
+
+  @override
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+          ),
+
+          // Move grid slightly upward
+          Transform.translate(
+            offset: const Offset(0, -25), // adjust value if needed
+            child: ValueListenableBuilder(
+              valueListenable: isLoading,
+              builder: (_, loading, __) {
+                if (loading) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+                }
+
+                return ValueListenableBuilder(
+                  valueListenable: items,
+                  builder: (_, list, __) {
+                    final displayItems = (list.isEmpty ? demoItems : list)
+                        .take(7)
+                        .toList();
+
+                    displayItems.add(
+                      CategoryItem(
+                        title: "More ${title.contains('B2C') ? 'B2C' : 'B2B'}",
+                        keywords: '',
+                        isMore: true,
+                      ),
+                    );
+
+                    return GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 4,
+                            childAspectRatio: 0.88,
+                            mainAxisSpacing: 6,
+                            crossAxisSpacing: 6,
+                          ),
+                      itemCount: displayItems.length,
+                      itemBuilder: (_, i) {
+                        final cat = displayItems[i];
+
+                        return cat.isMore
+                            ? MoreCategoryTile(
+                                title: cat.title,
+                                onTap: onMoreTap,
+                              )
+                            : CategoryTile(item: cat);
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CategoryTile extends StatelessWidget {
+  final CategoryItem item;
+
+  const CategoryTile({super.key, required this.item});
+
+  static const Map<String, List<String>> _subcategories = {
+    'college': [
+      'Arts College',
+      'Engineering College',
+      'Medical College',
+      'Polytechnic College',
+      'Nursing College',
+      'Law College',
+      'Management College',
+    ],
+    'doctor': [
+      'Cardiologist',
+      'Dentist',
+      'Dermatologist',
+      'Pediatrician',
+      'Orthopedic',
+      'Gynecologist',
+      'Neurologist',
+      'ENT Specialist',
+    ],
+    'hospital': [
+      'Ent Hospital',
+      'Children Hospital',
+      'Eye Hospital',
+      'Ortho Hospital',
+      'Maternity Hospital',
+      'Cancer Hospital',
+      'Heart Hospital',
+    ],
+    'hotel': [
+      'Luxury Hotels',
+      'Budget Hotels',
+      'Resorts',
+      'Homestays',
+      'Lodges',
+      'Service Apartments',
+    ],
+    'travel': [
+      'Travel Agents',
+      'Tour Packages',
+      'Cab Services',
+      'Bus Operators',
+      'Visa Services',
+    ],
+    'shop': [
+      'Supermarket',
+      'Clothing Store',
+      'Electronics Shop',
+      'Jewellery Shop',
+      'Furniture Shop',
+    ],
+    'parlour': [
+      'Beauty Parlour',
+      'Hair Salon',
+      'Spa & Massage',
+      'Bridal Makeup',
+    ],
+  };
+
+  void _showSubcategorySheet(BuildContext context) {
+    final lowerKeywords = item.keywords.toLowerCase();
+    final matchingKey = _subcategories.keys.firstWhere(
+      (key) => lowerKeywords.contains(key),
+      orElse: () => '',
+    );
+
+    if (matchingKey.isEmpty || !_subcategories.containsKey(matchingKey)) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => SearchPage(
+            initialFilter: item.keywords,
+            category: '',
+            selectedLetter: '',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final subs = _subcategories[matchingKey]!;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, controller) => Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 50,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '${item.title} Subcategories',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: GridView.builder(
+                  controller: controller,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.4,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                  ),
+                  itemCount: subs.length,
+                  itemBuilder: (context, i) {
+                    final sub = subs[i];
+                    return ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepPurple.shade50,
+                        foregroundColor: Colors.deepPurple,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => SearchPage(
+                              initialFilter: sub,
+                              category: '',
+                              forceGeneralSearch: true,
+                              subcategoryContext: matchingKey,
+                              selectedLetter: '',
+                            ),
+                          ),
+                        );
+                      },
+                      child: Text(
+                        sub,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _showSubcategorySheet(context),
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 34,
+            backgroundColor: Colors.deepPurple.shade50,
+            backgroundImage:
+                item.image.isNotEmpty && item.image.startsWith('http')
+                ? NetworkImage(item.image)
+                : null,
+            child: item.image.isEmpty || !item.image.startsWith('http')
+                ? Icon(
+                    CategoryItem.iconFor(item.keywords),
+                    color: Colors.deepPurple,
+                    size: 30,
+                  )
+                : null,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            item.title,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MoreCategoryTile extends StatelessWidget {
+  final String title;
+  final VoidCallback onTap;
+
+  const MoreCategoryTile({super.key, required this.title, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 34,
+            backgroundColor: Colors.deepPurple.shade100,
+            child: Text(
+              title.replaceAll(" ", "\n"),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                height: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
         ],
       ),
     );
@@ -2596,6 +3053,7 @@ class CategoryItem {
   bool get isB2C => keywords.toLowerCase().contains(
     RegExp(r'(hospital|hotel|college|travel|parlour|doctor|shop)'),
   );
+
   bool get isB2B => keywords.toLowerCase().contains(
     RegExp(r'(chemical|electrical|builder|steel|cnc|hydraulic|electronics)'),
   );
