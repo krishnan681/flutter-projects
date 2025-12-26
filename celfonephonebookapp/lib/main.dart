@@ -5,7 +5,7 @@ import 'firebase_options.dart';
 
 import 'supabase/supabase.dart';
 import 'utils/splash_screen.dart';
-import 'screens/homepage_shell.dart'; // ← Import the shell
+import 'screens/homepage_shell.dart';
 import 'screens/onboarding_screen.dart';
 
 void main() async {

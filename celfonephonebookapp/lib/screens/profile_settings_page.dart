@@ -1088,8 +1088,9 @@ import '../supabase/supabase.dart';
 // Helper: Title case
 // ---------------------------------------------------------------------
 extension StringCasing on String {
-  String toTitleCase() =>
-      split(' ').map((s) => s[0].toUpperCase() + s.substring(1)).join(' ');
+  String toTitleCase() => split(
+    ' ',
+  ).map((s) => s.isEmpty ? '' : s[0].toUpperCase() + s.substring(1)).join(' ');
 }
 
 // ---------------------------------------------------------------------
@@ -1107,19 +1108,19 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _isLoading = false;
   String? _userId;
   Map<String, dynamic> _profileData = {};
-  bool _isBulkEditing = false; // Only bulk edit mode
+  bool _isBulkEditing = false;
   final Map<String, TextEditingController> _controllers = {};
   final ImagePicker _picker = ImagePicker();
   List<String> _uploadedImages = [];
   double _profileCompletion = 0.0;
 
-  // ------------------- COLORS (NO PURPLE, NO GRADIENT) -------------------
+  // ------------------- COLORS -------------------
   static const Color primaryColor = Color(0xFF00695C); // Deep Teal
   static const Color accentColor = Color(0xFFFFC107); // Amber
   static const Color backgroundColor = Color(0xFFF5F5F5);
   static const Color cardColor = Colors.white;
 
-  // ------------------- EXCLUDED FIELDS -------------------
+  // ------------------- EXCLUDED & EDITABLE FIELDS -------------------
   final Set<String> _excludedFields = {
     'created_at',
     'user_type',
@@ -1133,7 +1134,6 @@ class _ProfilePageState extends State<ProfilePage> {
     'priority',
   };
 
-  // ------------------- EDITABLE FIELDS -------------------
   final List<String> _editableFields = [
     'business_name',
     'person_name',
@@ -1153,6 +1153,14 @@ class _ProfilePageState extends State<ProfilePage> {
     _loadUserProfile();
   }
 
+  @override
+  void dispose() {
+    for (var controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
   // ------------------- LOAD PROFILE -------------------
   Future<void> _loadUserProfile() async {
     setState(() => _isLoading = true);
@@ -1161,24 +1169,29 @@ class _ProfilePageState extends State<ProfilePage> {
       _userId = prefs.getString("userId");
 
       if (_userId == null) {
-        _showSnackBar("User ID not found", Icons.error, Colors.red);
+        _showSnackBar("User not logged in", Icons.error, Colors.red);
         return;
       }
 
       final data = await SupabaseService.client
           .from("profiles")
           .select()
-          .eq("id", _userId as Object)
+          .eq("id", _userId!)
           .maybeSingle();
 
-      if (data != null) {
-        _profileData = data;
-        _initControllers();
-        _uploadedImages = List<String>.from(data['product_image'] ?? []);
-        _calculateProfileCompletion();
+      if (data != null && mounted) {
+        setState(() {
+          _profileData = Map<String, dynamic>.from(data);
+          _initControllers();
+          _uploadedImages = List<String>.from(
+            _profileData['product_image'] ?? [],
+          );
+          _calculateProfileCompletion();
+        });
       }
     } catch (e) {
-      _showSnackBar("Error loading profile: $e", Icons.error, Colors.red);
+      if (mounted)
+        _showSnackBar("Error loading profile: $e", Icons.error, Colors.red);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1194,18 +1207,15 @@ class _ProfilePageState extends State<ProfilePage> {
 
   // ------------------- PROFILE COMPLETION -------------------
   void _calculateProfileCompletion() {
-    int filled = _editableFields
-        .where(
-          (f) =>
-              _profileData[f] != null &&
-              _profileData[f].toString().trim().isNotEmpty,
-        )
-        .length;
+    int filled = _editableFields.where((f) {
+      final value = _profileData[f]?.toString().trim();
+      return value != null && value.isNotEmpty;
+    }).length;
 
     if (_uploadedImages.isNotEmpty) filled++;
 
-    final total = _editableFields.length + 1;
-    _profileCompletion = (filled / total) * 100;
+    final total = _editableFields.length + 1; // +1 for images
+    _profileCompletion = filled / total * 100;
   }
 
   void _refreshCompletion() => setState(_calculateProfileCompletion);
@@ -1218,7 +1228,7 @@ class _ProfilePageState extends State<ProfilePage> {
       final updateMap = <String, dynamic>{};
       for (final field in _editableFields) {
         final value = _controllers[field]?.text.trim() ?? "";
-        updateMap[field] = value;
+        updateMap[field] = value.isEmpty ? null : value;
         _profileData[field] = value;
       }
 
@@ -1237,55 +1247,9 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  // ------------------- IMAGE UPLOAD -------------------
-  // Future<void> _pickAndUploadImage() async {
-  //   final picked = await _picker.pickImage(source: ImageSource.gallery);
-  //   if (picked == null || _userId == null) return;
-
-  //   final file = File(picked.path);
-  //   final fileName = "${DateTime.now().millisecondsSinceEpoch}_${picked.name}";
-
-  //   try {
-  //     final storagePath = "product_images/$_userId/$fileName";
-  //     await SupabaseService.client.storage
-  //         .from("uploads")
-  //         .upload(storagePath, file);
-
-  //     final publicUrl = SupabaseService.client.storage
-  //         .from("uploads")
-  //         .getPublicUrl(storagePath);
-
-  //     _uploadedImages.add(publicUrl);
-  //     await SupabaseService.client
-  //         .from("profiles")
-  //         .update({"product_image": _uploadedImages})
-  //         .eq("id", _userId!);
-
-  //     setState(() => _refreshCompletion());
-  //     _showSnackBar("Image uploaded", Icons.check, Colors.green);
-  //   } catch (e) {
-  //     _showSnackBar("Upload failed: $e", Icons.error, Colors.red);
-  //   }
-  // }
-
-  // // ------------------- IMAGE DELETE -------------------
-  // Future<void> _deleteImage(String url) async {
-  //   if (_userId == null) return;
-  //   try {
-  //     _uploadedImages.remove(url);
-  //     await SupabaseService.client
-  //         .from("profiles")
-  //         .update({"product_image": _uploadedImages})
-  //         .eq("id", _userId!);
-  //     setState(() => _refreshCompletion());
-  //     _showSnackBar("Image deleted", Icons.check, Colors.green);
-  //   } catch (e) {
-  //     _showSnackBar("Delete failed", Icons.error, Colors.red);
-  //   }
-  // }
-
   // ------------------- SNACKBAR -------------------
   void _showSnackBar(String message, IconData icon, Color color) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -1303,7 +1267,7 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // ------------------- THREE-DOT MENU -------------------
+  // ------------------- MENU -------------------
   void _showMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -1351,22 +1315,43 @@ class _ProfilePageState extends State<ProfilePage> {
     return map[field] ?? Icons.info;
   }
 
-  // ------------------- HEADER -------------------
+  // ------------------- SAFE INITIAL -------------------
+  String _getInitial() {
+    final name =
+        (_profileData['business_name'] ?? _profileData['person_name'])
+            as String?;
+    if (name == null || name.trim().isEmpty) return "U";
+    return name.trim()[0].toUpperCase();
+  }
+
+  String _getDisplayName() {
+    final business = _profileData['business_name'] as String?;
+    final person = _profileData['person_name'] as String?;
+    return (business?.isNotEmpty == true)
+        ? business!
+        : (person?.isNotEmpty == true)
+        ? person!
+        : "Your Profile";
+  }
+
+  // ------------------- HEADER (FIXED & SAFE) -------------------
   Widget _buildHeader() {
     return Container(
       color: primaryColor,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       child: Row(
         children: [
           CircleAvatar(
             radius: 40,
             backgroundColor: accentColor,
-            child: _profileData["business_name"] != null
-                ? Text(
-                    _profileData["business_name"].toString()[0].toUpperCase(),
-                    style: const TextStyle(fontSize: 32, color: Colors.white),
-                  )
-                : const Icon(Icons.person, size: 40, color: Colors.white),
+            child: Text(
+              _getInitial(),
+              style: const TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -1374,28 +1359,36 @@ class _ProfilePageState extends State<ProfilePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _profileData["business_name"] ?? "Your Profile",
+                  _getDisplayName(),
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 Text(
-                  _profileData["email"] ?? "email@example.com",
-                  style: const TextStyle(fontSize: 14, color: Colors.white70),
+                  _profileData['email']?.toString().isNotEmpty == true
+                      ? _profileData['email']
+                      : "No email",
+                  style: const TextStyle(fontSize: 15, color: Colors.white70),
                 ),
               ],
             ),
           ),
+          const SizedBox(width: 12),
           CircularPercentIndicator(
-            radius: 30.0,
-            lineWidth: 6.0,
+            radius: 34.0,
+            lineWidth: 7.0,
             percent: _profileCompletion / 100,
             center: Text(
               "${_profileCompletion.round()}%",
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             progressColor: accentColor,
             backgroundColor: Colors.white24,
@@ -1405,9 +1398,12 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // ------------------- READ-ONLY FIELD ROW -------------------
+  // ------------------- READ-ONLY FIELD -------------------
   Widget _buildReadOnlyField(String label, String fieldName, IconData icon) {
-    final value = _profileData[fieldName]?.toString() ?? "";
+    final rawValue = _profileData[fieldName];
+    final value = rawValue?.toString().trim();
+    final displayValue = (value == null || value.isEmpty) ? "<Not set>" : value;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       child: Container(
@@ -1425,7 +1421,7 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         child: Row(
           children: [
-            Icon(icon, color: primaryColor),
+            Icon(icon, color: primaryColor, size: 28),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
@@ -1433,11 +1429,11 @@ class _ProfilePageState extends State<ProfilePage> {
                 children: [
                   Text(
                     label,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Text(
-                    value.isEmpty ? "<empty>" : value,
+                    displayValue,
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
@@ -1495,6 +1491,9 @@ class _ProfilePageState extends State<ProfilePage> {
                       filled: true,
                       fillColor: Colors.grey[50],
                     ),
+                    maxLines: field == 'description' || field == 'keywords'
+                        ? 3
+                        : 1,
                   ),
                 );
               }).toList(),
@@ -1505,7 +1504,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     child: ElevatedButton.icon(
                       onPressed: _saveAllFields,
                       icon: const Icon(Icons.save),
-                      label: const Text("Save All"),
+                      label: const Text("Save All Changes"),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primaryColor,
                         foregroundColor: Colors.white,
@@ -1520,8 +1519,10 @@ class _ProfilePageState extends State<ProfilePage> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        setState(() => _isBulkEditing = false);
-                        _initControllers(); // Reset values
+                        setState(() {
+                          _isBulkEditing = false;
+                          _initControllers(); // Reset to original
+                        });
                       },
                       icon: const Icon(Icons.cancel),
                       label: const Text("Cancel"),
@@ -1544,79 +1545,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // ------------------- IMAGE GALLERY -------------------
-  // Widget _buildImageGallery() {
-  //   return Column(
-  //     crossAxisAlignment: CrossAxisAlignment.start,
-  //     children: [
-  //       Padding(
-  //         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-  //         child: Text(
-  //           "Product Images",
-  //           style: TextStyle(
-  //             fontSize: 18,
-  //             fontWeight: FontWeight.bold,
-  //             color: primaryColor,
-  //           ),
-  //         ),
-  //       ),
-  //       SizedBox(
-  //         height: 140,
-  //         child: ListView.builder(
-  //           scrollDirection: Axis.horizontal,
-  //           padding: const EdgeInsets.symmetric(horizontal: 16),
-  //           itemCount: _uploadedImages.length + 1,
-  //           itemBuilder: (context, index) {
-  //             if (index == _uploadedImages.length) {
-  //               return GestureDetector(
-  //                 onTap: _pickAndUploadImage,
-  //                 child: Container(
-  //                   width: 120,
-  //                   height: 120,
-  //                   margin: const EdgeInsets.only(right: 8),
-  //                   decoration: BoxDecoration(
-  //                     border: Border.all(color: Colors.grey),
-  //                     borderRadius: BorderRadius.circular(12),
-  //                     color: Colors.grey[200],
-  //                   ),
-  //                   child: const Icon(Icons.add_a_photo, color: Colors.grey),
-  //                 ),
-  //               );
-  //             }
-  //             final url = _uploadedImages[index];
-  //             return Stack(
-  //               children: [
-  //                 Container(
-  //                   margin: const EdgeInsets.only(right: 8),
-  //                   child: ClipRRect(
-  //                     borderRadius: BorderRadius.circular(12),
-  //                     child: Image.network(
-  //                       url,
-  //                       width: 120,
-  //                       height: 120,
-  //                       fit: BoxFit.cover,
-  //                       errorBuilder: (c, e, s) =>
-  //                           const Icon(Icons.broken_image, size: 50),
-  //                     ),
-  //                   ),
-  //                 ),
-  //                 Positioned(
-  //                   top: 0,
-  //                   right: 8,
-  //                   child: IconButton(
-  //                     icon: const Icon(Icons.delete, color: Colors.red),
-  //                     onPressed: () => _deleteImage(url),
-  //                   ),
-  //                 ),
-  //               ],
-  //             );
-  //           },
-  //         ),
-  //       ),
-  //     ],
-  //   );
-  // }
-
   // ------------------- BUILD -------------------
   @override
   Widget build(BuildContext context) {
@@ -1634,20 +1562,13 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ],
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: _pickAndUploadImage,
-      //   backgroundColor: accentColor,
-      //   child: const Icon(Icons.add_a_photo, color: Colors.white),
-      //   tooltip: "Add Product Image",
-      // ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: primaryColor))
           : CustomScrollView(
               slivers: [
                 SliverToBoxAdapter(child: _buildHeader()),
                 SliverToBoxAdapter(child: const SizedBox(height: 16)),
 
-                // BULK EDIT MODE
                 if (_isBulkEditing)
                   SliverToBoxAdapter(child: _buildBulkEditForm())
                 else
@@ -1681,7 +1602,6 @@ class _ProfilePageState extends State<ProfilePage> {
                     ]),
                   ),
 
-                // SliverToBoxAdapter(child: _buildImageGallery()),
                 SliverToBoxAdapter(child: const SizedBox(height: 80)),
               ],
             ),

@@ -1726,7 +1726,6 @@ class _HomePageState extends State<HomePage> {
   late final ValueNotifier<bool> _isLoadingBanners = ValueNotifier(true);
   late final ValueNotifier<bool> _isLoadingCategories = ValueNotifier(true);
   late final ValueNotifier<bool> _isLoadingFirms = ValueNotifier(true);
-  late final ValueNotifier<bool> _isLoadingDirectories = ValueNotifier(true);
 
   late final ValueNotifier<List<Map<String, dynamic>>> _banners = ValueNotifier(
     [],
@@ -1739,9 +1738,6 @@ class _HomePageState extends State<HomePage> {
   );
   late final ValueNotifier<List<Map<String, dynamic>>> _popularFirms =
       ValueNotifier([]);
-  late final ValueNotifier<List<DirectoryItem>> _directories = ValueNotifier(
-    [],
-  );
 
   @override
   void initState() {
@@ -1755,7 +1751,6 @@ class _HomePageState extends State<HomePage> {
       _loadBanners(),
       _loadCategories(),
       _loadPopularFirms(),
-      _loadDirectories(),
     ]);
   }
 
@@ -1862,26 +1857,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loadDirectories() async {
-    try {
-      final response = await _supabase
-          .from('tiles_titles')
-          .select()
-          .order('id', ascending: true);
-
-      final List<DirectoryItem> items = (response as List)
-          .map((e) => DirectoryItem.fromMap(e as Map<String, dynamic>))
-          .toList();
-
-      _directories.value = items;
-    } catch (e) {
-      debugPrint("Directories load error: $e");
-      _directories.value = [];
-    } finally {
-      _isLoadingDirectories.value = false;
-    }
-  }
-
   void _openSearchPage() {
     Navigator.push(
       context,
@@ -1913,12 +1888,10 @@ class _HomePageState extends State<HomePage> {
     _isLoadingBanners.dispose();
     _isLoadingCategories.dispose();
     _isLoadingFirms.dispose();
-    _isLoadingDirectories.dispose();
     _banners.dispose();
     _b2cCategories.dispose();
     _b2bCategories.dispose();
     _popularFirms.dispose();
-    _directories.dispose();
     super.dispose();
   }
 
@@ -2062,7 +2035,6 @@ class _HomePageState extends State<HomePage> {
                       ),
 
                       const SizedBox(height: 32),
-                      const DirectoriesSection(),
 
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2081,15 +2053,29 @@ class _HomePageState extends State<HomePage> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 32),
-
                           Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16.0,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
+                            padding: const EdgeInsets.only(left: 10),
+                            child: CarouselSlider(
+                              options: CarouselOptions(
+                                height: 200.0,
+                                autoPlay: false,
+                                enlargeCenterPage: false,
+                                viewportFraction: 0.34,
+                                padEnds: false,
+                                enableInfiniteScroll: false,
+                              ),
+                              items: [
+                                _buildDirectoryCard(
+                                  image: "assets/images/gold.jpg",
+                                  keywords: "gold ",
+                                  title: " Gem & Jewellery Directory",
+                                ),
+
+                                _buildDirectoryCard(
+                                  image: "assets/images/foundary.jpg",
+                                  keywords: "foundry ",
+                                  title: "Foundries Directory",
+                                ),
                                 _buildPlayBookCard(
                                   image: "assets/images/book1.png",
                                   link:
@@ -2111,7 +2097,7 @@ class _HomePageState extends State<HomePage> {
                               ],
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 40),
                         ],
                       ),
                     ],
@@ -2125,9 +2111,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
-  // ... (All other methods like _buildAppBar, _buildAZRow, _buildBanner, etc. remain unchanged)
-  // For brevity, they are kept exactly as in your original code.
 
   Widget _buildAppBar() {
     return Container(
@@ -2209,7 +2192,7 @@ class _HomePageState extends State<HomePage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: Border.all(color: const Color.fromARGB(255, 0, 0, 0)),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.08),
@@ -2308,6 +2291,137 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Card for external Google Play books
+  Widget _buildPlayBookCard({
+    required String image,
+    required String link,
+    required String title,
+  }) {
+    return GestureDetector(
+      onTap: () async {
+        final uri = Uri.parse(link);
+        try {
+          final launched = await launchUrl(
+            uri,
+            mode: LaunchMode.externalApplication,
+          );
+          if (!launched) debugPrint('Could not launch $link');
+        } catch (e) {
+          debugPrint('Error launching URL $link: $e');
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: Image.asset(
+                image,
+                height: 130,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDirectoryCard({
+    required String image,
+    required String keywords,
+    required String title,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SearchPage(
+              initialFilter: keywords.trim(),
+              category: '',
+              selectedLetter: '',
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: Image.asset(
+                image,
+                height: 130,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   static final _demoB2C = [
     CategoryItem(title: 'Hospital', keywords: 'hospital'),
     CategoryItem(title: 'Hotels', keywords: 'hotel'),
@@ -2329,244 +2443,7 @@ class _HomePageState extends State<HomePage> {
   ];
 }
 
-class DirectoryItem {
-  final String title;
-  final String imageUrl;
-  final String imageTitle;
-  final String keywords;
-  final IconData? fallbackIcon;
-
-  DirectoryItem({
-    required this.title,
-    this.imageUrl = '',
-    this.imageTitle = '',
-    this.keywords = '',
-    this.fallbackIcon,
-  });
-
-  factory DirectoryItem.fromMap(Map<String, dynamic> map) {
-    return DirectoryItem(
-      title: map['group_title'] ?? '',
-      imageUrl: map['image'] ?? '',
-      imageTitle: map['image_title'] ?? '',
-      keywords: map['image_keywords'] ?? '',
-      fallbackIcon: _iconForTitle(map['group_title'] ?? ''),
-    );
-  }
-
-  static IconData _iconForTitle(String title) {
-    final lower = title.toLowerCase();
-    if (lower.contains('gem') || lower.contains('jewellery'))
-      return Icons.diamond;
-    if (lower.contains('foundry')) return Icons.factory;
-    if (lower.contains('coimbatore')) return Icons.book;
-    if (lower.contains('bangalore')) return Icons.location_city;
-    if (lower.contains('pollachi')) return Icons.menu_book;
-    if (lower.contains('kalakurichi')) return Icons.library_books;
-    return Icons.book;
-  }
-}
-
-class DirectoriesSection extends StatelessWidget {
-  const DirectoriesSection({super.key});
-
-  void _navigateToSearch(BuildContext context, String keyword) {
-    if (keyword.trim().isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SearchPage(
-          initialFilter: keyword.trim(),
-          category: '',
-          selectedLetter: '',
-        ),
-      ),
-    );
-  }
-
-  @override
-  @override
-  Widget build(BuildContext context) {
-    final homeState = context.findAncestorStateOfType<_HomePageState>()!;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      color: Colors.deepPurple.shade50,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Our Directories",
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.deepPurple,
-            ),
-          ),
-
-          Transform.translate(
-            offset: const Offset(0, -25),
-            child: ValueListenableBuilder<bool>(
-              valueListenable: homeState._isLoadingDirectories,
-              builder: (_, loading, __) {
-                if (loading) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.only(top: 12),
-                      child: CircularProgressIndicator(),
-                    ),
-                  );
-                }
-
-                return ValueListenableBuilder<List<DirectoryItem>>(
-                  valueListenable: homeState._directories,
-                  builder: (_, directories, __) {
-                    if (directories.isEmpty) {
-                      return const Text(
-                        "No directories available",
-                        style: TextStyle(color: Colors.grey),
-                      );
-                    }
-
-                    return GridView.count(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: 3,
-                      mainAxisSpacing: 16,
-                      crossAxisSpacing: 14,
-                      childAspectRatio: 1.1,
-                      children: directories.map((item) {
-                        final bool isClickable = item.keywords
-                            .trim()
-                            .isNotEmpty;
-
-                        return InkWell(
-                          onTap: isClickable
-                              ? () => _navigateToSearch(context, item.keywords)
-                              : null,
-                          borderRadius: BorderRadius.circular(16),
-                          child: _DirectoryCard(
-                            title: item.title,
-                            imageUrl: item.imageUrl,
-                            imageTitle: item.imageTitle.isNotEmpty
-                                ? item.imageTitle
-                                : null,
-                            fallbackIcon: item.fallbackIcon,
-                            isClickable: isClickable,
-                          ),
-                        );
-                      }).toList(),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DirectoryCard extends StatelessWidget {
-  final String title;
-  final String imageUrl;
-  final String? imageTitle;
-  final IconData? fallbackIcon;
-  final bool isClickable;
-
-  const _DirectoryCard({
-    required this.title,
-    this.imageUrl = '',
-    this.imageTitle,
-    this.fallbackIcon,
-    this.isClickable = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bool hasImage =
-        imageUrl.trim().isNotEmpty &&
-        (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
-
-    return Container(
-      padding: const EdgeInsets.symmetric(),
-
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isClickable
-              ? Colors.deepPurple.shade300
-              : Colors.deepPurple.shade100,
-          width: isClickable ? 2.5 : 1,
-        ),
-        boxShadow: isClickable
-            ? [
-                BoxShadow(
-                  color: Colors.deepPurple.withOpacity(0.25),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ]
-            : null,
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (hasImage)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                imageUrl,
-                height: 48,
-                width: 48,
-                fit: BoxFit.contain,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const SizedBox(
-                    height: 48,
-                    width: 48,
-                    child: Center(
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  );
-                },
-                errorBuilder: (_, __, ___) => Icon(
-                  fallbackIcon ?? Icons.book,
-                  size: 32,
-                  color: isClickable
-                      ? Colors.deepPurple
-                      : Colors.deepPurple.shade400,
-                ),
-              ),
-            )
-          else
-            Icon(
-              fallbackIcon ?? Icons.book,
-              size: 32,
-              color: isClickable
-                  ? Colors.deepPurple
-                  : Colors.deepPurple.shade400,
-            ),
-
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 10,
-              height: 1.1,
-              fontWeight: isClickable ? FontWeight.bold : FontWeight.w600,
-              color: isClickable ? Colors.deepPurple : Colors.black87,
-            ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
-  }
-}
+// Remaining classes unchanged...
 
 class PopularFirmCard extends StatelessWidget {
   final Map<String, dynamic> profile;
@@ -2611,7 +2488,7 @@ class PopularFirmCard extends StatelessWidget {
             CircleAvatar(
               radius: 34,
               backgroundColor: Colors.grey.shade100,
-              backgroundImage: hasValidImage ? NetworkImage(imageUrl!) : null,
+              backgroundImage: hasValidImage ? NetworkImage(imageUrl) : null,
               child: hasValidImage
                   ? null
                   : Icon(
@@ -2620,7 +2497,6 @@ class PopularFirmCard extends StatelessWidget {
                       color: Colors.grey.shade600,
                     ),
             ),
-
             Text(
               name,
               textAlign: TextAlign.center,
@@ -2637,72 +2513,6 @@ class PopularFirmCard extends StatelessWidget {
       ),
     );
   }
-}
-
-Widget _buildPlayBookCard({
-  required String image,
-  required String link,
-  required String title,
-}) {
-  return Expanded(
-    child: GestureDetector(
-      onTap: () async {
-        final uri = Uri.parse(link);
-        try {
-          final launched = await launchUrl(
-            uri,
-            mode: LaunchMode.externalApplication,
-          );
-          if (!launched) debugPrint('Could not launch $link');
-        } catch (e) {
-          debugPrint('Error launching URL $link: $e');
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
-              ),
-              child: Image.asset(
-                image,
-                height: 130,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
 
 class CategorySection extends StatelessWidget {
@@ -2722,7 +2532,6 @@ class CategorySection extends StatelessWidget {
   });
 
   @override
-  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
@@ -2734,9 +2543,8 @@ class CategorySection extends StatelessWidget {
             style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
           ),
 
-          // Move grid slightly upward
           Transform.translate(
-            offset: const Offset(0, -25), // adjust value if needed
+            offset: const Offset(0, -25),
             child: ValueListenableBuilder(
               valueListenable: isLoading,
               builder: (_, loading, __) {
@@ -2932,8 +2740,8 @@ class CategoryTile extends StatelessWidget {
                     final sub = subs[i];
                     return ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepPurple.shade50,
-                        foregroundColor: Colors.deepPurple,
+                        backgroundColor: Colors.pink.shade50,
+                        foregroundColor: Colors.pinkAccent,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -2977,7 +2785,7 @@ class CategoryTile extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 34,
-            backgroundColor: Colors.deepPurple.shade50,
+            backgroundColor: Colors.pink.shade50,
             backgroundImage:
                 item.image.isNotEmpty && item.image.startsWith('http')
                 ? NetworkImage(item.image)
@@ -2985,7 +2793,7 @@ class CategoryTile extends StatelessWidget {
             child: item.image.isEmpty || !item.image.startsWith('http')
                 ? Icon(
                     CategoryItem.iconFor(item.keywords),
-                    color: Colors.deepPurple,
+                    color: Colors.pinkAccent,
                     size: 30,
                   )
                 : null,
@@ -3018,12 +2826,12 @@ class MoreCategoryTile extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 34,
-            backgroundColor: Colors.deepPurple.shade100,
+            backgroundColor: Colors.pink.shade100,
             child: Text(
               title.replaceAll(" ", "\n"),
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: Colors.black,
+                color: Color.fromARGB(255, 255, 0, 153),
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
                 height: 1.2,

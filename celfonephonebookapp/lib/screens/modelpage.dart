@@ -1773,6 +1773,7 @@
 // //     );
 // //   }
 // // }
+import 'dart:async'; // Required for Timer
 import 'package:celfonephonebookapp/supabase/supabase.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -1792,13 +1793,14 @@ class ModelPage extends StatefulWidget {
 
 class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
   late PageController _pageController;
-  late TabController _tabController;
+  TabController? _tabController;
   int _currentPage = 0;
 
   List<String> _images = [];
   List<Map<String, dynamic>> _priorityProducts = [];
   List<Map<String, dynamic>> _secondaryProducts = [];
   bool _isLoadingProducts = false;
+  Timer? _autoScrollTimer;
 
   @override
   void initState() {
@@ -1806,8 +1808,86 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
     _pageController = PageController();
 
     final String profileId = widget.profile['id']?.toString() ?? "";
-    _loadCoverPhoto(profileId);
+
+    // Determine tier
+    final String sub = (widget.profile['subscription'] ?? '')
+        .toString()
+        .toLowerCase();
+    final bool isPrime = widget.profile['is_prime'] == true;
+    final String tier = (isPrime || sub == 'gold')
+        ? 'gold'
+        : (sub == 'business')
+        ? 'business'
+        : (sub == 'normal_business' || sub == 'normal business')
+        ? 'normal_business'
+        : 'free';
+
+    // Initialize TabController only for Gold
+    if (tier == 'gold') {
+      _tabController = TabController(length: 2, vsync: this);
+    }
+
+    // Load images based on tier
+    if (tier == 'free') {
+      _loadFreeTierImages().then((_) {
+        if (_images.isNotEmpty && mounted) {
+          _startAutoScroll();
+        }
+      });
+    } else {
+      _loadCoverPhoto(profileId);
+    }
+
     _loadProducts(profileId);
+  }
+
+  // Auto-scroll for free tier
+  void _startAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (!mounted || _images.isEmpty) return;
+
+      final nextPage = (_currentPage + 1) % _images.length;
+      _pageController.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  void _resetAutoScrollTimer() {
+    _autoScrollTimer?.cancel();
+    _startAutoScroll();
+  }
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _pageController.dispose();
+    _tabController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFreeTierImages() async {
+    try {
+      final response = await SupabaseService.client
+          .from('free_tier_shared_header_images')
+          .select('image_url')
+          .order('sort_order', ascending: true);
+
+      if (response.isNotEmpty && mounted) {
+        setState(() {
+          _images = (response as List)
+              .map((item) => item['image_url'] as String)
+              .toList();
+          _currentPage = 0;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading free tier shared images: $e');
+      if (mounted) setState(() => _images = []);
+    }
   }
 
   Future<void> _loadCoverPhoto(String profileId) async {
@@ -1820,9 +1900,11 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
           .maybeSingle();
 
       if (row != null && (row['cover_photo']?.toString().isNotEmpty ?? false)) {
-        setState(() {
-          _images = [row['cover_photo'].toString()];
-        });
+        if (mounted) {
+          setState(() {
+            _images = [row['cover_photo'].toString()];
+          });
+        }
       }
     } catch (e) {
       debugPrint('Cover photo error: $e');
@@ -1906,13 +1988,6 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
     }
   }
 
-  @override
-  void dispose() {
-    _pageController.dispose();
-    _tabController.dispose();
-    super.dispose();
-  }
-
   String formatMobile(String n) =>
       n.length >= 5 ? "${n.substring(0, 5)} XXXXX" : n;
 
@@ -1928,22 +2003,6 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
     if (!url.startsWith('http')) url = 'https://$url';
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
-
-  Widget _btn(IconData i, Color c, VoidCallback? tap) => GestureDetector(
-    onTap: tap,
-    child: Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        color: c,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 4)),
-        ],
-      ),
-      child: Icon(i, color: Colors.white, size: 28),
-    ),
-  );
 
   void _favModal(String name, String mobile) {
     if (mobile.isEmpty) {
@@ -1969,19 +2028,19 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
   Widget _premiumCard(Map<String, dynamic> p, Color color) => Card(
     elevation: 0,
     color: color.withOpacity(0.08),
-    margin: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     child: ExpansionTile(
-      tilePadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+      tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       leading: CircleAvatar(
         radius: 18,
         backgroundColor: color,
-        child: Icon(Icons.inventory_2, color: Colors.white, size: 18),
+        child: const Icon(Icons.inventory_2, color: Colors.white, size: 18),
       ),
       title: Text(
         p['name'] ?? "",
-        style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15.5),
+        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15.5),
       ),
       children: [
         if (p['image'] != null && p['image'].isNotEmpty)
@@ -1994,7 +2053,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
               fit: BoxFit.cover,
             ),
           ),
-        SizedBox(height: 8),
+        const SizedBox(height: 8),
         if (p['price'] != null && p['price'].isNotEmpty)
           Text(
             'Price: ${p['price']}',
@@ -2003,7 +2062,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
         if (p['description'] != null && p['description'].isNotEmpty)
           Text(
             p['description'],
-            style: TextStyle(color: Colors.black87, height: 1.5),
+            style: const TextStyle(color: Colors.black87, height: 1.5),
           ),
       ],
     ),
@@ -2042,7 +2101,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
         lightColor = Colors.pinkAccent;
         break;
       case 'normal_business':
-        primaryColor = const Color(0xFF6366F1); // Change this color anytime
+        primaryColor = const Color(0xFF6366F1);
         lightColor = primaryColor.withOpacity(0.3);
         break;
       default:
@@ -2050,14 +2109,8 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
         lightColor = Colors.grey;
     }
 
-    final bool isPremium =
-        tier == 'gold' || tier == 'business' || tier == 'normal_business';
-    final bool showProductTab = tier == 'gold'; // Only Gold gets Products tab
-
-    // Initialize TabController only if needed
-    if (showProductTab) {
-      _tabController = TabController(length: 2, vsync: this);
-    }
+    final bool isPremium = tier != 'free';
+    final bool showProductTab = tier == 'gold';
 
     final String mobile = profile['mobile_number']?.toString() ?? '';
     final String whatsapp = profile['whats_app']?.toString() ?? mobile;
@@ -2118,64 +2171,67 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
 
     Widget actionButtonsCarousel = Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          children: [
-            if (mobile.isNotEmpty)
-              _actionIcon(
-                icon: Icons.call,
-                color: Colors.green,
-                onTap: () => _call(mobile),
-                label: "Call",
-              ),
-            const SizedBox(width: 20),
-
-            if (whatsapp.isNotEmpty)
-              _actionIcon(
-                icon: FontAwesomeIcons.whatsapp,
-                color: const Color(0xFF25D366),
-                onTap: () => _wa(whatsapp),
-                label: "WhatsApp",
-              ),
-            const SizedBox(width: 20),
-
-            if (mobile.isNotEmpty)
-              _actionIcon(
-                icon: FontAwesomeIcons.commentDots,
-                color: Colors.blue,
-                onTap: () => _sms(mobile),
-                label: "SMS",
-              ),
-            const SizedBox(width: 20),
-
-            if (email.isNotEmpty)
-              _actionIcon(
-                icon: FontAwesomeIcons.envelope,
-                color: Colors.orange,
-                onTap: () => _mail(email),
-                label: "Email",
-              ),
-            const SizedBox(width: 20),
-
-            if (website.isNotEmpty)
-              _actionIcon(
-                icon: FontAwesomeIcons.globe,
-                color: Colors.purple,
-                onTap: () => _web(website),
-                label: "Website",
-              ),
-            const SizedBox(width: 20),
-
-            if (landline.isNotEmpty)
-              _actionIcon(
-                icon: Icons.phone,
-                color: const Color(0xFF9C27B0),
-                onTap: () => _call(fullLandline),
-                label: "Landline",
-              ),
-          ],
+      child: Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: IntrinsicWidth(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ...[
+                  if (mobile.isNotEmpty)
+                    _actionIcon(
+                      icon: Icons.call,
+                      color: Colors.green,
+                      onTap: () => _call(mobile),
+                      label: "Call",
+                    ),
+                  if (whatsapp.isNotEmpty)
+                    _actionIcon(
+                      icon: FontAwesomeIcons.whatsapp,
+                      color: const Color(0xFF25D366),
+                      onTap: () => _wa(whatsapp),
+                      label: "WhatsApp",
+                    ),
+                  if (mobile.isNotEmpty)
+                    _actionIcon(
+                      icon: FontAwesomeIcons.commentDots,
+                      color: Colors.blue,
+                      onTap: () => _sms(mobile),
+                      label: "SMS",
+                    ),
+                  if (email.isNotEmpty)
+                    _actionIcon(
+                      icon: FontAwesomeIcons.envelope,
+                      color: Colors.orange,
+                      onTap: () => _mail(email),
+                      label: "Email",
+                    ),
+                  if (website.isNotEmpty)
+                    _actionIcon(
+                      icon: FontAwesomeIcons.globe,
+                      color: Colors.purple,
+                      onTap: () => _web(website),
+                      label: "Website",
+                    ),
+                  if (landline.isNotEmpty)
+                    _actionIcon(
+                      icon: Icons.phone,
+                      color: const Color(0xFF9C27B0),
+                      onTap: () => _call(fullLandline),
+                      label: "Landline",
+                    ),
+                ].asMap().entries.expand((entry) {
+                  final int index = entry.key;
+                  final Widget button = entry.value;
+                  // Add spacing only between buttons
+                  return index == 0
+                      ? [button]
+                      : [const SizedBox(width: 40), button];
+                }).toList(),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -2208,7 +2264,6 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
             )
           else
             Container(color: primaryColor.withOpacity(0.12)),
-
           if (_images.isEmpty)
             Center(
               child: Container(
@@ -2235,7 +2290,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
               radius: 22,
               backgroundColor: Colors.white70,
               child: IconButton(
-                icon: Icon(Icons.arrow_back_ios_new),
+                icon: const Icon(Icons.arrow_back_ios_new),
                 onPressed: () => Navigator.pop(context),
               ),
             ),
@@ -2247,7 +2302,11 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
               radius: 22,
               backgroundColor: Colors.white70,
               child: IconButton(
-                icon: Icon(Icons.favorite_border, color: Colors.pink, size: 24),
+                icon: const Icon(
+                  Icons.favorite_border,
+                  color: Colors.pink,
+                  size: 24,
+                ),
                 onPressed: () => _favModal(displayName, mobile),
               ),
             ),
@@ -2262,8 +2321,8 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                 children: List.generate(
                   _images.length,
                   (i) => AnimatedContainer(
-                    duration: Duration(milliseconds: 300),
-                    margin: EdgeInsets.symmetric(horizontal: 4),
+                    duration: const Duration(milliseconds: 300),
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
                     width: _currentPage == i ? 12 : 8,
                     height: 8,
                     decoration: BoxDecoration(
@@ -2287,7 +2346,10 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
             children: [
               premiumHeader,
               Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 child: Row(
                   children: [
                     CircleAvatar(
@@ -2302,14 +2364,14 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
-                    SizedBox(width: 16),
+                    const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             displayName,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
                             ),
@@ -2328,27 +2390,23 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                   ],
                 ),
               ),
-
-              // ONLY GOLD GETS TABS
               if (showProductTab)
                 TabBar(
                   controller: _tabController,
                   labelColor: primaryColor,
                   indicatorColor: primaryColor,
-                  tabs: [
+                  tabs: const [
                     Tab(text: "About"),
                     Tab(text: "Products"),
                   ],
                 ),
-
               Expanded(
                 child: showProductTab
                     ? TabBarView(
                         controller: _tabController,
                         children: [
-                          // ABOUT TAB (same for all)
                           SingleChildScrollView(
-                            padding: EdgeInsets.all(20),
+                            padding: const EdgeInsets.all(20),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -2386,25 +2444,27 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                                 if (website.isNotEmpty)
                                   _info(Icons.language, Colors.purple, website),
                                 if (desc.isNotEmpty) ...[
-                                  SizedBox(height: 20),
-                                  Text(
+                                  const SizedBox(height: 20),
+                                  const Text(
                                     "Description",
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 16,
                                     ),
                                   ),
-                                  SizedBox(height: 8),
-                                  Text(desc, style: TextStyle(height: 1.5)),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    desc,
+                                    style: const TextStyle(height: 1.5),
+                                  ),
                                 ],
                               ],
                             ),
                           ),
-                          // PRODUCTS TAB (only Gold)
                           _isLoadingProducts
-                              ? Center(child: CircularProgressIndicator())
+                              ? const Center(child: CircularProgressIndicator())
                               : allProducts.isEmpty
-                              ? Center(
+                              ? const Center(
                                   child: Text(
                                     "No products listed",
                                     style: TextStyle(color: Colors.grey),
@@ -2417,7 +2477,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                                         (p) => _premiumCard(p, primaryColor),
                                       ),
                                     if (_secondaryProducts.isNotEmpty) ...[
-                                      Padding(
+                                      const Padding(
                                         padding: EdgeInsets.all(16),
                                         child: Text(
                                           "Other Products",
@@ -2435,8 +2495,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                         ],
                       )
                     : SingleChildScrollView(
-                        // Business & Normal Business — only About
-                        padding: EdgeInsets.all(20),
+                        padding: const EdgeInsets.all(20),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -2474,16 +2533,16 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
                             if (website.isNotEmpty)
                               _info(Icons.language, Colors.purple, website),
                             if (desc.isNotEmpty) ...[
-                              SizedBox(height: 20),
-                              Text(
+                              const SizedBox(height: 20),
+                              const Text(
                                 "Description",
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
                                 ),
                               ),
-                              SizedBox(height: 8),
-                              Text(desc, style: TextStyle(height: 1.5)),
+                              const SizedBox(height: 8),
+                              Text(desc, style: const TextStyle(height: 1.5)),
                             ],
                           ],
                         ),
@@ -2495,91 +2554,173 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
       );
     }
 
-    // FREE USER — Basic layout (unchanged)
+    // FREE UI - Auto-scroll carousel, no dots
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios_new),
+          icon: const Icon(Icons.arrow_back_ios_new),
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.favorite_border),
+            icon: const Icon(Icons.favorite_border),
             onPressed: () => _favModal(displayName, mobile),
           ),
         ],
+        title: const SizedBox.shrink(),
+        centerTitle: false,
       ),
       body: SingleChildScrollView(
-        padding: EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              businessName.isNotEmpty ? businessName : "Profile",
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+            // AUTO-SCROLL CAROUSEL - No dots
+            SizedBox(
+              height: 120,
+              width: double.infinity,
+              child: Stack(
+                children: [
+                  if (_images.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FullScreenImageGallery(
+                            images: _images,
+                            initialIndex: _currentPage,
+                          ),
+                        ),
+                      ),
+                      child: PageView.builder(
+                        controller: _pageController,
+                        itemCount: _images.length,
+                        onPageChanged: (i) {
+                          setState(() => _currentPage = i);
+                          _resetAutoScrollTimer();
+                        },
+                        itemBuilder: (_, i) => Image.network(
+                          _images[i],
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      color: Colors.grey[200],
+                      child: const Center(
+                        child: Icon(
+                          Icons.business,
+                          size: 80,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
-            if (keyword.isNotEmpty) ...[
-              SizedBox(height: 10),
-              Text(
-                keyword,
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontStyle: FontStyle.italic,
+
+            const SizedBox(height: 20),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                businessName.isNotEmpty ? businessName : displayName,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            ],
-            SizedBox(height: 20),
+            ),
+
+            if (keyword.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                child: Text(
+                  keyword,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.grey[700],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 16),
             actionButtonsCarousel,
-            if (personName.isNotEmpty)
-              _info(
-                Icons.person,
-                Colors.blue,
-                "$namePrefix $personName".trim(),
+            const SizedBox(height: 20),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (personName.isNotEmpty)
+                    _info(
+                      Icons.person,
+                      Colors.black87,
+                      "$namePrefix $personName".trim(),
+                    ),
+                  if (address.isNotEmpty || city.isNotEmpty || pin.isNotEmpty)
+                    _info(
+                      Icons.location_on,
+                      Colors.redAccent,
+                      "$address, $city, $pin",
+                    ),
+                  if (mobile.isNotEmpty)
+                    _info(
+                      Icons.phone_android,
+                      Colors.green,
+                      formatMobile(mobile),
+                    ),
+                  if (landline.isNotEmpty)
+                    _info(
+                      Icons.phone,
+                      Colors.teal,
+                      fullLandline.isEmpty
+                          ? "—————"
+                          : formatMobile(fullLandline),
+                    ),
+                  if (email.isNotEmpty)
+                    _info(Icons.email, Colors.orange, email),
+                  if (website.isNotEmpty)
+                    _info(Icons.language, Colors.purple, website),
+                  if (desc.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    Text(
+                      desc,
+                      style: const TextStyle(height: 1.5, fontSize: 15),
+                    ),
+                  ],
+                  if (allProducts.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    const Text(
+                      "Products/Services:",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      allProducts
+                          .map((p) => p['name'] ?? '')
+                          .where((n) => n.isNotEmpty)
+                          .join(", "),
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ],
+                ],
               ),
-            if (address.isNotEmpty || city.isNotEmpty || pin.isNotEmpty)
-              _info(
-                Icons.location_on,
-                Colors.redAccent,
-                "$address, $city, $pin".trim(),
-              ),
-            if (mobile.isNotEmpty)
-              _info(Icons.phone, Colors.green, formatMobile(mobile)),
-            if (landline.isNotEmpty)
-              _info(
-                Icons.phone,
-                Colors.teal,
-                landCode.isNotEmpty ? "$landCode XXXXX" : "XXXXX",
-              ),
-            if (email.isNotEmpty) _info(Icons.email, Colors.orange, email),
-            if (website.isNotEmpty)
-              _info(Icons.language, Colors.purple, website),
-            if (desc.isNotEmpty) ...[
-              SizedBox(height: 20),
-              Text(
-                "Description",
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Text(desc),
-            ],
-            if (allProducts.isNotEmpty) ...[
-              SizedBox(height: 24),
-              Text(
-                "Products/Services:",
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Text(
-                allProducts
-                    .map((p) => p['name'] ?? '')
-                    .where((n) => n.isNotEmpty)
-                    .join(", "),
-              ),
-            ],
-            SizedBox(height: 40),
+            ),
+
+            const SizedBox(height: 40),
           ],
         ),
       ),
@@ -2587,7 +2728,7 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
   }
 
   Widget _info(IconData icon, Color color, String text) => Container(
-    margin: EdgeInsets.symmetric(vertical: 8),
+    margin: const EdgeInsets.symmetric(vertical: 8),
     child: Row(
       children: [
         Container(
@@ -2596,11 +2737,11 @@ class _ModelPageState extends State<ModelPage> with TickerProviderStateMixin {
           alignment: Alignment.center,
           child: Icon(icon, color: color, size: 22),
         ),
-        SizedBox(width: 12),
+        const SizedBox(width: 12),
         Expanded(
           child: Text(
             text,
-            style: TextStyle(fontSize: 15, color: Colors.black87),
+            style: const TextStyle(fontSize: 15, color: Colors.black87),
           ),
         ),
       ],
@@ -2612,10 +2753,10 @@ class FullScreenImageGallery extends StatelessWidget {
   final List<String> images;
   final int initialIndex;
   const FullScreenImageGallery({
-    Key? key,
+    super.key,
     required this.images,
     this.initialIndex = 0,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2653,10 +2794,10 @@ class FavoriteOptionsModal extends StatefulWidget {
   final String name;
   final String mobile;
   const FavoriteOptionsModal({
-    Key? key,
+    super.key,
     required this.name,
     required this.mobile,
-  }) : super(key: key);
+  });
 
   @override
   State<FavoriteOptionsModal> createState() => _FavoriteOptionsModalState();
